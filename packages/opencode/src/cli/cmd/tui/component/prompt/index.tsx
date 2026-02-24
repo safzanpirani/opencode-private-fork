@@ -34,6 +34,7 @@ import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
+import { DialogUsage, type UsageEntry } from "../dialog-usage"
 
 export type PromptProps = {
   sessionID?: string
@@ -87,6 +88,73 @@ export function Prompt(props: PromptProps) {
     if (sync.data.provider.length === 0) {
       dialog.replace(() => <DialogProviderConnect />)
     }
+  }
+
+  function clearPrompt() {
+    input.extmarks.clear()
+    input.clear()
+    setStore("prompt", {
+      input: "",
+      parts: [],
+    })
+    setStore("extmarkToPartIndex", new Map())
+    props.onSubmit?.()
+  }
+
+  function usageProvider(value: string | undefined) {
+    if (!value) return "openai"
+    const normalized = value.toLowerCase()
+    if (["openai", "codex", "chatgpt", "gpt"].includes(normalized)) return "openai"
+    return ""
+  }
+
+  function showUsage(inputText: string) {
+    const parts = inputText.trim().split(/\s+/)
+    const providerToken = parts.slice(1).find((part) => !part.startsWith("-"))
+    const providerID = usageProvider(providerToken)
+    if (!providerID) {
+      DialogAlert.show(dialog, "Usage", `Unsupported provider: ${providerToken}`)
+      return
+    }
+
+    const refresh = parts.includes("--refresh") || parts.includes("-r")
+    const query = refresh ? `?refresh=${Date.now()}` : ""
+
+    sdk.fetch(`${sdk.url}/provider/${providerID}/rate-limits${query}`)
+      .then((response) => {
+        if (!response.ok) return null
+        return response.json()
+      })
+      .then((data) => {
+        if (!data) {
+          DialogAlert.show(dialog, "Usage", "No usage data available")
+          return
+        }
+
+        const entry: UsageEntry = {
+          provider: providerID,
+          displayName: "OpenAI",
+          planType: data.planType ?? null,
+          primary: data.primary
+            ? {
+                usedPercent: data.primary.usedPercent,
+                windowMinutes: data.primary.windowDurationMins,
+                resetsAt: data.primary.resetsAt,
+              }
+            : null,
+          secondary: data.secondary
+            ? {
+                usedPercent: data.secondary.usedPercent,
+                windowMinutes: data.secondary.windowDurationMins,
+                resetsAt: data.secondary.resetsAt,
+              }
+            : null,
+        }
+        dialog.replace(() => <DialogUsage entries={[entry]} />)
+      })
+      .catch(() => {
+        DialogAlert.show(dialog, "Usage", "Failed to fetch usage")
+      })
   }
 
   const textareaKeybindings = useTextareaKeybindings()
@@ -351,6 +419,18 @@ export function Prompt(props: PromptProps) {
           ))
         },
       },
+      {
+        title: "Usage",
+        value: "prompt.usage",
+        category: "Prompt",
+        slash: {
+          name: "usage",
+        },
+        onSelect: (dialog) => {
+          showUsage("/usage")
+          dialog.clear()
+        },
+      },
     ]
   })
 
@@ -527,11 +607,16 @@ export function Prompt(props: PromptProps) {
 
   async function submit() {
     if (props.disabled) return
-    if (autocomplete?.visible) return
+    if (autocomplete?.visible && !store.prompt.input.trim().startsWith("/usage")) return
     if (!store.prompt.input) return
     const trimmed = store.prompt.input.trim()
     if (trimmed === "exit" || trimmed === "quit" || trimmed === ":q") {
       exit()
+      return
+    }
+    if (trimmed.startsWith("/usage")) {
+      showUsage(trimmed)
+      clearPrompt()
       return
     }
     const selectedModel = local.model.current()
