@@ -25,6 +25,15 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       headers: props.headers,
     })
 
+    const request: typeof fetch = (input, init) => {
+      const headers = new Headers(props.headers)
+      if (init?.headers) new Headers(init.headers).forEach((v, k) => headers.set(k, v))
+      return (props.fetch ?? fetch)(input, {
+        ...init,
+        headers,
+      })
+    }
+
     const emitter = createGlobalEmitter<{
       [key in Event["type"]]: Extract<Event, { type: key }>
     }>()
@@ -96,6 +105,6 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       if (timer) clearTimeout(timer)
     })
 
-    return { client: sdk, event: emitter, url: props.url }
+    return { client: sdk, event: emitter, url: props.url, fetch: request }
   },
 })

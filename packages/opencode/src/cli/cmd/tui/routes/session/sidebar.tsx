@@ -12,6 +12,28 @@ import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
 import { TodoItem } from "../../component/todo-item"
 
+function formatDuration(totalMinutes: number): string {
+  if (totalMinutes < 60) return `${Math.max(0, Math.round(totalMinutes))}m`
+  if (totalMinutes < 24 * 60) return `${(totalMinutes / 60).toFixed(1)}h`
+  return `${(totalMinutes / (24 * 60)).toFixed(1)}d`
+}
+
+function formatRemaining(resetsAt: number | null | undefined): string {
+  if (!resetsAt) return "--"
+  const remaining = (resetsAt * 1000 - Date.now()) / 60000
+  return formatDuration(Math.max(0, remaining))
+}
+
+function formatWindow(windowDurationMins: number | null | undefined, fallbackMins: number): string {
+  return formatDuration(windowDurationMins ?? fallbackMins)
+}
+
+function renderBar(usedPercent: number, width = 16): string {
+  const percent = Math.max(0, Math.min(100, usedPercent))
+  const used = Math.round((percent / 100) * width)
+  return `${"━".repeat(used)}${"─".repeat(Math.max(0, width - used))}`
+}
+
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
   const { theme } = useTheme()
@@ -60,6 +82,10 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     }
   })
 
+  const codexLimit = createMemo(() => sync.data.provider_rate_limit["openai"])
+  const codexPrimary = createMemo(() => codexLimit()?.primary ?? null)
+  const codexSecondary = createMemo(() => codexLimit()?.secondary ?? null)
+
   const directory = useDirectory()
   const kv = useKV()
 
@@ -105,6 +131,32 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
               <text fg={theme.textMuted}>{context()?.tokens ?? 0} tokens</text>
               <text fg={theme.textMuted}>{context()?.percentage ?? 0}% used</text>
               <text fg={theme.textMuted}>{cost()} spent</text>
+
+              <Show when={codexPrimary() || codexSecondary()}>
+                <box marginTop={1} gap={0}>
+                  <text fg={theme.accent}>
+                    <b>Codex</b>
+                  </text>
+                  <Show when={codexPrimary()}>
+                    {(window) => (
+                      <text fg={theme.textMuted}>
+                        ({formatRemaining(window().resetsAt)}/{formatWindow(window().windowDurationMins, 300)})
+                        <span style={{ fg: theme.warning }}> {renderBar(window().usedPercent)}</span>
+                        <span style={{ fg: theme.warning }}> {Math.round(window().usedPercent)}%</span>
+                      </text>
+                    )}
+                  </Show>
+                  <Show when={codexSecondary()}>
+                    {(window) => (
+                      <text fg={theme.textMuted}>
+                        ({formatRemaining(window().resetsAt)}/{formatWindow(window().windowDurationMins, 10_080)})
+                        <span style={{ fg: theme.error }}> {renderBar(window().usedPercent)}</span>
+                        <span style={{ fg: theme.error }}> {Math.round(window().usedPercent)}%</span>
+                      </text>
+                    )}
+                  </Show>
+                </box>
+              </Show>
             </box>
             <Show when={mcpEntries().length > 0}>
               <box>

@@ -5,6 +5,7 @@ import { Config } from "../../config/config"
 import { Provider } from "../../provider/provider"
 import { ModelsDev } from "../../provider/models"
 import { ProviderAuth } from "../../provider/auth"
+import { ProviderRateLimit } from "../../provider/rate-limit"
 import { mapValues } from "remeda"
 import { errors } from "../error"
 import { lazy } from "../../util/lazy"
@@ -78,6 +79,57 @@ export const ProviderRoutes = lazy(() =>
       }),
       async (c) => {
         return c.json(await ProviderAuth.methods())
+      },
+    )
+    .get(
+      "/:providerID/rate-limits",
+      describeRoute({
+        summary: "Get provider rate limits",
+        description: "Retrieve the current rate-limit snapshot for a provider when available.",
+        operationId: "provider.rate_limits",
+        responses: {
+          200: {
+            description: "Provider rate-limit snapshot",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z
+                    .object({
+                      limitId: z.string().nullable(),
+                      limitName: z.string().nullable(),
+                      primary: z
+                        .object({
+                          usedPercent: z.number(),
+                          windowDurationMins: z.number().nullable(),
+                          resetsAt: z.number().nullable(),
+                        })
+                        .nullable(),
+                      secondary: z
+                        .object({
+                          usedPercent: z.number(),
+                          windowDurationMins: z.number().nullable(),
+                          resetsAt: z.number().nullable(),
+                        })
+                        .nullable(),
+                      planType: z.string().nullable(),
+                    })
+                    .nullable(),
+                ),
+              },
+            },
+          },
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          providerID: z.string().meta({ description: "Provider ID" }),
+        }),
+      ),
+      async (c) => {
+        const { providerID } = c.req.valid("param")
+        if (providerID !== "openai") return c.json(null)
+        return c.json(await ProviderRateLimit.getOpenAI())
       },
     )
     .post(

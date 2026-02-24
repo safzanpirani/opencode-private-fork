@@ -109,6 +109,34 @@ function use() {
   return ctx
 }
 
+function formatUsageDuration(totalMinutes: number): string {
+  if (totalMinutes >= 24 * 60) {
+    const days = totalMinutes / (24 * 60)
+    const rounded = Number(days.toFixed(1))
+    return `${rounded}d`
+  }
+  if (totalMinutes >= 60) {
+    return `${Math.max(0, Math.round(totalMinutes / 60))}h`
+  }
+  return `${Math.max(0, Math.round(totalMinutes))}m`
+}
+
+function formatUsageRemaining(resetsAt: number | null | undefined): string {
+  if (!resetsAt) return "--"
+  const remainingMins = (resetsAt * 1000 - Date.now()) / 60000
+  return formatUsageDuration(Math.max(0, remainingMins))
+}
+
+function formatUsageWindow(windowDurationMins: number | null | undefined, fallbackMins: number): string {
+  return formatUsageDuration(windowDurationMins ?? fallbackMins)
+}
+
+function renderUsageBar(usedPercent: number, width = 26): string {
+  const percent = Math.max(0, Math.min(100, usedPercent))
+  const used = Math.round((percent / 100) * width)
+  return `${"━".repeat(used)}${"─".repeat(Math.max(0, width - used))}`
+}
+
 export function Session() {
   const route = useRouteData("session")
   const { navigate } = useRoute()
@@ -308,6 +336,16 @@ export function Session() {
   }
 
   const local = useLocal()
+
+  const codexModel = createMemo(() => {
+    const model = local.model.current()
+    if (!model) return false
+    if (model.providerID !== "openai") return false
+    return model.modelID.includes("codex")
+  })
+  const codexLimit = createMemo(() => sync.data.provider_rate_limit["openai"])
+  const codexPrimary = createMemo(() => codexLimit()?.primary ?? null)
+  const codexSecondary = createMemo(() => codexLimit()?.secondary ?? null)
 
   function moveChild(direction: number) {
     if (children().length === 1) return
@@ -1116,6 +1154,53 @@ export function Session() {
               </Show>
               <Show when={permissions().length === 0 && questions().length > 0}>
                 <QuestionPrompt request={questions()[0]} />
+              </Show>
+              <Show
+                when={
+                  !session()?.parentID &&
+                  permissions().length === 0 &&
+                  questions().length === 0 &&
+                  (codexModel() || codexPrimary() || codexSecondary())
+                }
+              >
+                <box
+                  marginBottom={1}
+                  paddingTop={0}
+                  paddingBottom={0}
+                  paddingLeft={1}
+                  paddingRight={1}
+                  border={[
+                    "top",
+                    "bottom",
+                  ]}
+                  borderColor={theme.borderSubtle}
+                >
+                  <box flexDirection="row" gap={1} flexWrap="wrap">
+                    <text fg={theme.accent}>Codex</text>
+                    <Show when={codexPrimary()}>
+                      {(window) => (
+                        <text fg={theme.textMuted}>
+                          ({formatUsageRemaining(window().resetsAt)}/{formatUsageWindow(window().windowDurationMins, 300)})
+                          <span style={{ fg: theme.warning }}> {renderUsageBar(window().usedPercent)}</span>
+                          <span style={{ fg: theme.warning }}> {Math.round(window().usedPercent)}%</span>
+                        </text>
+                      )}
+                    </Show>
+                    <Show when={codexSecondary()}>
+                      {(window) => (
+                        <text fg={theme.textMuted}>
+                          <span style={{ fg: theme.textMuted }}>|</span> ({formatUsageRemaining(window().resetsAt)}/
+                          {formatUsageWindow(window().windowDurationMins, 10_080)})
+                          <span style={{ fg: theme.error }}> {renderUsageBar(window().usedPercent)}</span>
+                          <span style={{ fg: theme.error }}> {Math.round(window().usedPercent)}%</span>
+                        </text>
+                      )}
+                    </Show>
+                    <Show when={!codexPrimary() && !codexSecondary()}>
+                      <text fg={theme.textMuted}>usage unavailable</text>
+                    </Show>
+                  </box>
+                </box>
               </Show>
               <Prompt
                 visible={!session()?.parentID && permissions().length === 0 && questions().length === 0}

@@ -8,6 +8,7 @@ import type { AssistantMessage, Session } from "@opencode-ai/sdk/v2"
 import { useCommandDialog } from "@tui/component/dialog-command"
 import { useKeybind } from "../../context/keybind"
 import { useTerminalDimensions } from "@opentui/solid"
+import { useLocal } from "@tui/context/local"
 
 const Title = (props: { session: Accessor<Session> }) => {
   const { theme } = useTheme()
@@ -25,6 +26,75 @@ const ContextInfo = (props: { context: Accessor<string | undefined>; cost: Acces
       <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
         {props.context()} ({props.cost()})
       </text>
+    </Show>
+  )
+}
+
+function formatDuration(totalMinutes: number): string {
+  if (totalMinutes < 60) return `${Math.max(0, Math.round(totalMinutes))}m`
+  if (totalMinutes < 24 * 60) return `${(totalMinutes / 60).toFixed(1)}h`
+  return `${(totalMinutes / (24 * 60)).toFixed(1)}d`
+}
+
+function formatWindow(windowDurationMins: number | null | undefined, fallbackMins: number): string {
+  const mins = windowDurationMins ?? fallbackMins
+  return formatDuration(mins)
+}
+
+function formatRemaining(resetsAt: number | null | undefined): string {
+  if (!resetsAt) return "--"
+  const remaining = (resetsAt * 1000 - Date.now()) / 60000
+  return formatDuration(Math.max(0, remaining))
+}
+
+function renderBar(usedPercent: number, width = 20): string {
+  const percent = Math.max(0, Math.min(100, usedPercent))
+  const used = Math.round((percent / 100) * width)
+  return `${"━".repeat(used)}${"─".repeat(Math.max(0, width - used))}`
+}
+
+const CodexUsage = () => {
+  const sync = useSync()
+  const local = useLocal()
+  const { theme } = useTheme()
+
+  const activeCodex = createMemo(() => {
+    const model = local.model.current()
+    if (!model) return false
+    if (model.providerID !== "openai") return false
+    return model.modelID.includes("codex")
+  })
+
+  const data = createMemo(() => sync.data.provider_rate_limit["openai"])
+  const primary = createMemo(() => data()?.primary ?? null)
+  const secondary = createMemo(() => data()?.secondary ?? null)
+
+  return (
+    <Show when={activeCodex() && (primary() || secondary())}>
+      <box flexDirection="row" gap={1} flexWrap="wrap">
+        <text fg={theme.accent}>
+          <b>Codex</b>
+        </text>
+        <Show when={primary()}>
+          {(window) => (
+            <text fg={theme.textMuted}>
+              ({formatRemaining(window().resetsAt)}/{formatWindow(window().windowDurationMins, 300)})
+              <span style={{ fg: theme.warning }}> {renderBar(window().usedPercent)}</span>
+              <span style={{ fg: theme.warning }}> {Math.round(window().usedPercent)}%</span>
+            </text>
+          )}
+        </Show>
+        <Show when={secondary()}>
+          {(window) => (
+            <text fg={theme.textMuted}>
+              <span style={{ fg: theme.textMuted }}>|</span> ({formatRemaining(window().resetsAt)}/
+              {formatWindow(window().windowDurationMins, 10_080)})
+              <span style={{ fg: theme.error }}> {renderBar(window().usedPercent)}</span>
+              <span style={{ fg: theme.error }}> {Math.round(window().usedPercent)}%</span>
+            </text>
+          )}
+        </Show>
+      </box>
     </Show>
   )
 }
@@ -88,6 +158,7 @@ export function Header() {
                 </text>
                 <ContextInfo context={context} cost={cost} />
               </box>
+              <CodexUsage />
               <box flexDirection="row" gap={2}>
                 <box
                   onMouseOver={() => setHover("parent")}
@@ -123,9 +194,12 @@ export function Header() {
             </box>
           </Match>
           <Match when={true}>
-            <box flexDirection={narrow() ? "column" : "row"} justifyContent="space-between" gap={1}>
-              <Title session={session} />
-              <ContextInfo context={context} cost={cost} />
+            <box flexDirection="column" gap={1}>
+              <box flexDirection={narrow() ? "column" : "row"} justifyContent="space-between" gap={1}>
+                <Title session={session} />
+                <ContextInfo context={context} cost={cost} />
+              </box>
+              <CodexUsage />
             </box>
           </Match>
         </Switch>
