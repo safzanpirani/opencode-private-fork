@@ -109,32 +109,53 @@ function use() {
   return ctx
 }
 
-function formatUsageDuration(totalMinutes: number): string {
-  if (totalMinutes >= 24 * 60) {
-    const days = totalMinutes / (24 * 60)
-    const rounded = Number(days.toFixed(1))
-    return `${rounded}d`
-  }
-  if (totalMinutes >= 60) {
-    return `${Math.max(0, Math.round(totalMinutes / 60))}h`
-  }
+type UsageWindow = {
+  usedPercent: number
+  windowDurationMins: number | null
+  resetsAt: number | null
+}
+
+function clampUsagePercent(value: number): number {
+  return Math.max(0, Math.min(100, value))
+}
+
+function formatUsageElapsed(totalMinutes: number): string {
+  if (totalMinutes >= 24 * 60) return `${(Math.round((totalMinutes / (24 * 60)) * 10) / 10).toFixed(1)}d`
+  if (totalMinutes >= 60) return `${(Math.round((totalMinutes / 60) * 10) / 10).toFixed(1)}h`
   return `${Math.max(0, Math.round(totalMinutes))}m`
 }
 
-function formatUsageRemaining(resetsAt: number | null | undefined): string {
-  if (!resetsAt) return "--"
-  const remainingMins = (resetsAt * 1000 - Date.now()) / 60000
-  return formatUsageDuration(Math.max(0, remainingMins))
+function formatUsageWindow(totalMinutes: number): string {
+  if (totalMinutes >= 24 * 60) return `${Math.max(1, Math.round(totalMinutes / (24 * 60)))}d`
+  if (totalMinutes >= 60) return `${Math.max(1, Math.round(totalMinutes / 60))}h`
+  return `${Math.max(1, Math.round(totalMinutes))}m`
 }
 
-function formatUsageWindow(windowDurationMins: number | null | undefined, fallbackMins: number): string {
-  return formatUsageDuration(windowDurationMins ?? fallbackMins)
+function usageBarParts(usedPercent: number, pacePercent: number, width: number) {
+  const span = Math.max(6, width)
+  const used = Math.round((clampUsagePercent(usedPercent) / 100) * span)
+  const markerIndex = Math.max(0, Math.min(span - 1, Math.round((clampUsagePercent(pacePercent) / 100) * (span - 1))))
+  const chars = Array.from({ length: span }, (_, i) => (i < used ? "━" : "─"))
+  return {
+    before: chars.slice(0, markerIndex).join(""),
+    marker: "│",
+    after: chars.slice(markerIndex + 1).join(""),
+  }
 }
 
-function renderUsageBar(usedPercent: number, width = 26): string {
-  const percent = Math.max(0, Math.min(100, usedPercent))
-  const used = Math.round((percent / 100) * width)
-  return `${"━".repeat(used)}${"─".repeat(Math.max(0, width - used))}`
+function usageWindowView(window: UsageWindow, fallbackMins: number, barWidth: number) {
+  const windowMins = Math.max(1, window.windowDurationMins ?? fallbackMins)
+  const remainingMins = window.resetsAt ? Math.max(0, (window.resetsAt * 1000 - Date.now()) / 60000) : null
+  const elapsedMins = remainingMins === null ? null : Math.max(0, Math.min(windowMins, windowMins - remainingMins))
+  const usedPercent = clampUsagePercent(window.usedPercent)
+  const pacePercent = elapsedMins === null ? 0 : clampUsagePercent((elapsedMins / windowMins) * 100)
+  return {
+    elapsedLabel: elapsedMins === null ? "--" : formatUsageElapsed(elapsedMins),
+    windowLabel: formatUsageWindow(windowMins),
+    usedLabel: `${Math.round(usedPercent)}%`,
+    overPace: elapsedMins !== null && usedPercent > pacePercent,
+    bar: usageBarParts(usedPercent, pacePercent, barWidth),
+  }
 }
 
 export function Session() {
@@ -346,6 +367,22 @@ export function Session() {
   const codexLimit = createMemo(() => sync.data.provider_rate_limit["openai"])
   const codexPrimary = createMemo(() => codexLimit()?.primary ?? null)
   const codexSecondary = createMemo(() => codexLimit()?.secondary ?? null)
+  const codexWindowCount = createMemo(() => (codexPrimary() ? 1 : 0) + (codexSecondary() ? 1 : 0))
+  const codexBarWidth = createMemo(() => {
+    const panes = Math.max(1, codexWindowCount())
+    const available = Math.max(20, contentWidth() - 8)
+    return Math.max(8, Math.floor(available / panes) - 16)
+  })
+  const codexPrimaryView = createMemo(() => {
+    const window = codexPrimary()
+    if (!window) return null
+    return usageWindowView(window, 300, codexBarWidth())
+  })
+  const codexSecondaryView = createMemo(() => {
+    const window = codexSecondary()
+    if (!window) return null
+    return usageWindowView(window, 10_080, codexBarWidth())
+  })
 
   function moveChild(direction: number) {
     if (children().length === 1) return
@@ -1163,41 +1200,40 @@ export function Session() {
                   (codexModel() || codexPrimary() || codexSecondary())
                 }
               >
-                <box
-                  marginBottom={1}
-                  paddingTop={0}
-                  paddingBottom={0}
-                  paddingLeft={1}
-                  paddingRight={1}
-                  border={[
-                    "top",
-                    "bottom",
-                  ]}
-                  borderColor={theme.borderSubtle}
-                >
-                  <box flexDirection="row" gap={1} flexWrap="wrap">
+                <box marginBottom={1} paddingLeft={1} paddingRight={1} border={["top", "bottom"]} borderColor={theme.borderSubtle}>
+                  <box gap={0}>
                     <text fg={theme.accent}>Codex</text>
-                    <Show when={codexPrimary()}>
-                      {(window) => (
-                        <text fg={theme.textMuted}>
-                          ({formatUsageRemaining(window().resetsAt)}/{formatUsageWindow(window().windowDurationMins, 300)})
-                          <span style={{ fg: theme.warning }}> {renderUsageBar(window().usedPercent)}</span>
-                          <span style={{ fg: theme.warning }}> {Math.round(window().usedPercent)}%</span>
-                        </text>
-                      )}
-                    </Show>
-                    <Show when={codexSecondary()}>
-                      {(window) => (
-                        <text fg={theme.textMuted}>
-                          <span style={{ fg: theme.textMuted }}>|</span> ({formatUsageRemaining(window().resetsAt)}/
-                          {formatUsageWindow(window().windowDurationMins, 10_080)})
-                          <span style={{ fg: theme.error }}> {renderUsageBar(window().usedPercent)}</span>
-                          <span style={{ fg: theme.error }}> {Math.round(window().usedPercent)}%</span>
-                        </text>
-                      )}
-                    </Show>
-                    <Show when={!codexPrimary() && !codexSecondary()}>
-                      <text fg={theme.textMuted}>usage unavailable</text>
+                    <Show when={codexPrimaryView() || codexSecondaryView()} fallback={<text fg={theme.textMuted}>usage unavailable</text>}>
+                      <box flexDirection="row" gap={2}>
+                        <Show when={codexPrimaryView()}>
+                          {(view) => (
+                            <box flexGrow={1}>
+                              <text fg={theme.textMuted}>
+                                <span style={{ fg: theme.text }}>5h </span>
+                                {view().elapsedLabel}/{view().windowLabel}
+                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().bar.before}</span>
+                                <span style={{ fg: view().overPace ? theme.error : theme.textMuted }}>{view().bar.marker}</span>
+                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}>{view().bar.after}</span>
+                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().usedLabel}</span>
+                              </text>
+                            </box>
+                          )}
+                        </Show>
+                        <Show when={codexSecondaryView()}>
+                          {(view) => (
+                            <box flexGrow={1}>
+                              <text fg={theme.textMuted}>
+                                <span style={{ fg: theme.text }}>7d </span>
+                                {view().elapsedLabel}/{view().windowLabel}
+                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().bar.before}</span>
+                                <span style={{ fg: view().overPace ? theme.error : theme.textMuted }}>{view().bar.marker}</span>
+                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}>{view().bar.after}</span>
+                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().usedLabel}</span>
+                              </text>
+                            </box>
+                          )}
+                        </Show>
+                      </box>
                     </Show>
                   </box>
                 </box>
