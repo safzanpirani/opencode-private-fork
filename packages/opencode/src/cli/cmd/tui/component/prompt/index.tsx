@@ -357,6 +357,26 @@ export function Prompt(props: PromptProps) {
     await sync.bootstrap()
   }
 
+  async function saveCurrentCodexProfile(label?: string) {
+    const result = await runCodexSwapRequest({
+      action: "add",
+      ...(label ? { label } : {}),
+    })
+    if (!result) {
+      DialogAlert.show(dialog, "Codex Swap", "Failed to save current account")
+      return
+    }
+
+    showUsageDialog(result)
+    if (result.error) {
+      toast.show({ variant: "warning", message: result.error, duration: 3000 })
+    } else {
+      const name = result.current?.label ?? result.current?.email ?? "account"
+      toast.show({ variant: "success", message: `Saved current account as ${name}`, duration: 2200 })
+    }
+    await sync.bootstrap()
+  }
+
   function showCodexSwap(inputText: string) {
     const parts = inputText.trim().split(/\s+/)
     const sub = (parts[1] ?? "next").toLowerCase()
@@ -366,7 +386,20 @@ export function Prompt(props: PromptProps) {
       return
     }
 
+    if (sub === "save" || sub === "save-current") {
+      const label = parts.slice(2).join(" ").trim() || undefined
+      void saveCurrentCodexProfile(label)
+      return
+    }
+
     if (sub === "add") {
+      const currentFlag = parts[2] === "--current" || parts[2] === "-c"
+      if (currentFlag) {
+        const label = parts.slice(3).join(" ").trim() || undefined
+        void saveCurrentCodexProfile(label)
+        return
+      }
+
       const label = parts.slice(2).join(" ").trim() || undefined
       void completeCodexAdd(label)
       return
@@ -383,7 +416,7 @@ export function Prompt(props: PromptProps) {
       DialogAlert.show(
         dialog,
         "Codex Swap",
-        "Usage:\n/codexwho\n/codexswap\n/codexswap status\n/codexswap add <label>\n/codexswap use <label|#>",
+        "Usage:\n/codexwho\n/codexswap\n/codexswap status\n/codexswap add <label>\n/codexswap add --current <label>\n/codexswap save <label>\n/codexswap use <label|#>",
       )
       return
     }
