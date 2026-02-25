@@ -37,6 +37,60 @@
   <a href="README.bn.md">বাংলা</a>
 </p>
 
+> [!IMPORTANT]
+> This repository includes a custom fork setup focused on Codex usage UX + queue behavior improvements.
+> If you're sharing this with a friend, use the quick setup prompt below to make it feel native (single command launch via alias/wrapper).
+
+## Quick fork setup (agent-friendly)
+
+Give the following prompt to any coding agent (or run manually) to set everything up in one shot:
+
+```text
+Set up this OpenCode fork so it runs like a native command named `ocx`.
+
+Requirements:
+1) Clone this fork to ~/Development/opencode-fork (or keep existing clone if present).
+2) Install dependencies with bun.
+3) Create executable launcher at ~/.local/bin/ocx that runs:
+   bun run --cwd "<ABSOLUTE_PATH_TO_REPO>/packages/opencode" --conditions=browser src/index.ts "$@"
+4) Ensure ~/.local/bin is in PATH (append to shell rc if missing).
+5) chmod +x ~/.local/bin/ocx
+6) Verify with:
+   - command -v ocx
+   - ocx --help
+7) Print a short success summary and exactly what was changed.
+
+Do not use shell aliases unless explicitly asked. Use an executable wrapper script.
+```
+
+### Manual setup (if you prefer)
+
+```bash
+# 1) Clone
+git clone <YOUR_FORK_URL> ~/Development/opencode-fork
+
+# 2) Install deps
+cd ~/Development/opencode-fork
+bun install
+
+# 3) Create native launcher command
+mkdir -p ~/.local/bin
+cat > ~/.local/bin/ocx <<'EOF'
+#!/usr/bin/env bash
+exec bun run --cwd "$HOME/Development/opencode-fork/packages/opencode" --conditions=browser src/index.ts "$@"
+EOF
+chmod +x ~/.local/bin/ocx
+
+# 4) Ensure PATH includes ~/.local/bin
+# (example for zsh)
+grep -q 'export PATH="$HOME/.local/bin:$PATH"' ~/.zshrc || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+
+# 5) Reload shell and verify
+source ~/.zshrc
+command -v ocx
+ocx --help
+```
+
 [![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
 
 ---
