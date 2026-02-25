@@ -1,5 +1,5 @@
 import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, t, dim, fg } from "@opentui/core"
-import { createEffect, createMemo, type JSX, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
+import { createEffect, createMemo, type JSX, onMount, createSignal, onCleanup, on, Show, Switch, Match, For } from "solid-js"
 import "opentui-spinner/solid"
 import path from "path"
 import { Filesystem } from "@/util/filesystem"
@@ -216,6 +216,11 @@ export function Prompt(props: PromptProps) {
 
   const [queuedPrompts, setQueuedPrompts] = createSignal<QueuedPrompt[]>([])
   const [sendingQueuedPrompt, setSendingQueuedPrompt] = createSignal(false)
+  const queuedPromptsForSession = createMemo(() => {
+    const sessionID = props.sessionID
+    if (!sessionID) return []
+    return queuedPrompts().filter((item) => item.sessionID === sessionID)
+  })
 
   createEffect(
     on(
@@ -691,7 +696,7 @@ export function Prompt(props: PromptProps) {
     }
 
     const payload = resolvePromptInput()
-    const queued = queuedPrompts().length + 1
+    const queued = queuedPromptsForSession().length + 1
     setQueuedPrompts((list) => [
       ...list,
       {
@@ -722,11 +727,15 @@ export function Prompt(props: PromptProps) {
   createEffect(() => {
     if (sendingQueuedPrompt()) return
     if (status().type !== "idle") return
-    const next = queuedPrompts()[0]
+    const next = queuedPromptsForSession()[0]
     if (!next) return
 
     setSendingQueuedPrompt(true)
-    setQueuedPrompts((list) => list.slice(1))
+    setQueuedPrompts((list) => {
+      const index = list.findIndex((item) => item.sessionID === next.sessionID && item.inputText === next.inputText)
+      if (index < 0) return list
+      return [...list.slice(0, index), ...list.slice(index + 1)]
+    })
     sendPrompt({
       sessionID: next.sessionID,
       model: next.model,
@@ -746,6 +755,12 @@ export function Prompt(props: PromptProps) {
         setSendingQueuedPrompt(false)
       })
   })
+
+  function queuedPreview(inputText: string) {
+    const oneLine = inputText.replace(/\s+/g, " ").trim()
+    if (oneLine.length <= 80) return oneLine
+    return oneLine.slice(0, 77) + "..."
+  }
 
   async function submit() {
     if (props.disabled) return
@@ -1248,6 +1263,21 @@ export function Prompt(props: PromptProps) {
             }
           />
         </box>
+        <Show when={queuedPromptsForSession().length > 0}>
+          <box paddingLeft={1} paddingBottom={1} gap={0}>
+            <For each={queuedPromptsForSession().slice(0, 2)}>
+              {(item, index) => (
+                <text fg={theme.textMuted}>
+                  <span style={{ fg: theme.textMuted }}>○ queued end-loop {index() + 1}</span>
+                  <span style={{ fg: theme.textMuted }}> · {queuedPreview(item.inputText)}</span>
+                </text>
+              )}
+            </For>
+            <Show when={queuedPromptsForSession().length > 2}>
+              <text fg={theme.textMuted}>+{queuedPromptsForSession().length - 2} more queued</text>
+            </Show>
+          </box>
+        </Show>
         <box flexDirection="row" justifyContent="space-between">
           <Show when={status().type !== "idle"} fallback={<text />}>
             <box

@@ -140,18 +140,22 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                   <Show when={codexPrimary()}>
                     {(window) => (
                       <text fg={theme.textMuted}>
-                        ({formatRemaining(window().resetsAt)}/{formatWindow(window().windowDurationMins, 300)})
-                        <span style={{ fg: theme.warning }}> {renderBar(window().usedPercent)}</span>
+                        <span style={{ fg: theme.warning }}>{renderBar(window().usedPercent)}</span>
                         <span style={{ fg: theme.warning }}> {Math.round(window().usedPercent)}%</span>
+                        <span style={{ fg: theme.textMuted }}>
+                          ({formatRemaining(window().resetsAt)}/{formatWindow(window().windowDurationMins, 300)})
+                        </span>
                       </text>
                     )}
                   </Show>
                   <Show when={codexSecondary()}>
                     {(window) => (
                       <text fg={theme.textMuted}>
-                        ({formatRemaining(window().resetsAt)}/{formatWindow(window().windowDurationMins, 10_080)})
-                        <span style={{ fg: theme.error }}> {renderBar(window().usedPercent)}</span>
+                        <span style={{ fg: theme.error }}>{renderBar(window().usedPercent)}</span>
                         <span style={{ fg: theme.error }}> {Math.round(window().usedPercent)}%</span>
+                        <span style={{ fg: theme.textMuted }}>
+                          ({formatRemaining(window().resetsAt)}/{formatWindow(window().windowDurationMins, 10_080)})
+                        </span>
                       </text>
                     )}
                   </Show>
