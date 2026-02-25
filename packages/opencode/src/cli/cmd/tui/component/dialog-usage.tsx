@@ -35,8 +35,8 @@ export function DialogUsage(props: { entries: UsageEntry[] }) {
                 <b>{entry.displayName}</b>
                 <span style={{ fg: theme.textMuted }}>{entry.planType ? ` · ${entry.planType}` : ""}</span>
               </text>
-              <Show when={entry.primary}>{(window) => <UsageRow label={windowLabel(window().windowMinutes, "primary")} window={window()} />}</Show>
-              <Show when={entry.secondary}>{(window) => <UsageRow label={windowLabel(window().windowMinutes, "secondary")} window={window()} />}</Show>
+              <Show when={entry.primary}>{(window) => <UsageRow window={window()} />}</Show>
+              <Show when={entry.secondary}>{(window) => <UsageRow window={window()} />}</Show>
             </box>
           )}
         </For>
@@ -45,40 +45,36 @@ export function DialogUsage(props: { entries: UsageEntry[] }) {
   )
 }
 
-function UsageRow(props: { label: string; window: UsageWindow }) {
+function UsageRow(props: { window: UsageWindow }) {
   const { theme } = useTheme()
   const used = clampPercent(props.window.usedPercent)
   const pace = pacePercent(props.window)
   const overPace = pace !== null && used > pace
   const stateColor = overPace || used >= 90 ? theme.error : theme.warning
-  const parts = barParts(used, pace, 18)
+  const parts = barParts(used, pace, 24)
 
   return (
     <text fg={theme.textMuted}>
-      <span style={{ fg: theme.text }}>{props.label}</span>
+      <span style={{ fg: theme.textMuted }}>{windowProgress(props.window)}</span>
       <span style={{ fg: stateColor }}> {parts.before}</span>
       <span style={{ fg: pace === null ? stateColor : theme.text }}>{parts.marker}</span>
       <span style={{ fg: stateColor }}>{parts.after}</span>
       <span style={{ fg: stateColor }}> {Math.round(used)}%</span>
-      <span style={{ fg: theme.textMuted }}> · resets {resetLabel(props.window.resetsAt)}</span>
     </text>
   )
 }
 
-function windowLabel(windowMinutes: number | null, fallback: "primary" | "secondary") {
-  if (!windowMinutes) return fallback === "primary" ? "Primary" : "Secondary"
-  if (windowMinutes >= 24 * 60) return `${Math.max(1, Math.round(windowMinutes / (24 * 60)))}d`
-  if (windowMinutes >= 60) return `${Math.max(1, Math.round(windowMinutes / 60))}h`
-  return `${Math.max(1, Math.round(windowMinutes))}m`
+function formatDuration(totalMinutes: number) {
+  if (totalMinutes < 60) return `${Math.max(0, Math.round(totalMinutes))}m`
+  if (totalMinutes < 24 * 60) return `${(totalMinutes / 60).toFixed(1)}h`
+  return `${(totalMinutes / (24 * 60)).toFixed(1)}d`
 }
 
-function resetLabel(resetAt: number | null) {
-  if (!resetAt) return "--"
-  const remaining = resetAt - Math.floor(Date.now() / 1000)
-  if (remaining <= 0) return "now"
-  if (remaining < 3600) return `${Math.max(1, Math.round(remaining / 60))}m`
-  if (remaining < 24 * 3600) return `${Math.max(1, Math.round(remaining / 3600))}h`
-  return `${Math.max(1, Math.round(remaining / (24 * 3600)))}d`
+function windowProgress(window: UsageWindow) {
+  if (!window.windowMinutes) return "(--/--)"
+  if (!window.resetsAt) return `(--/${formatDuration(window.windowMinutes)})`
+  const remaining = Math.max(0, (window.resetsAt * 1000 - Date.now()) / 60000)
+  return `(${formatDuration(remaining)}/${formatDuration(window.windowMinutes)})`
 }
 
 function barParts(usedPercent: number, pacePercent: number | null, width: number) {
