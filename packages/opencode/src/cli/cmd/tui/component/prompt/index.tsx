@@ -30,6 +30,8 @@ import { createColors, createFrames } from "../../ui/spinner.ts"
 import { useDialog } from "@tui/ui/dialog"
 import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
 import { DialogAlert } from "../../ui/dialog-alert"
+import { DialogPrompt } from "../../ui/dialog-prompt"
+import { Link } from "../../ui/link"
 import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
@@ -58,6 +60,29 @@ export type PromptRef = {
 
 const PLACEHOLDERS = ["Fix a TODO in the codebase", "What is the tech stack of this project?", "Fix broken tests"]
 const SHELL_PLACEHOLDERS = ["ls -la", "git status", "pwd"]
+
+function DialogCodexSwapOauth(props: { title: string; instructions: string; url: string }) {
+  const dialog = useDialog()
+  const { theme } = useTheme()
+
+  return (
+    <box paddingLeft={2} paddingRight={2} gap={1} paddingBottom={1}>
+      <box flexDirection="row" justifyContent="space-between">
+        <text fg={theme.text}>
+          <b>{props.title}</b>
+        </text>
+        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
+          esc
+        </text>
+      </box>
+      <box gap={1}>
+        <Link href={props.url} fg={theme.primary} />
+        <text fg={theme.textMuted}>{props.instructions}</text>
+      </box>
+      <text fg={theme.textMuted}>Waiting for authorization...</text>
+    </box>
+  )
+}
 
 export function Prompt(props: PromptProps) {
   let input: TextareaRenderable
@@ -221,6 +246,117 @@ export function Prompt(props: PromptProps) {
     })
   }
 
+  async function runCodexSwapRequest(body: {
+    action: "next" | "use" | "add" | "status"
+    selector?: string
+    label?: string
+  }): Promise<AccountResponse | null> {
+    const response = await sdk
+      .fetch(`${sdk.url}/provider/openai/account/swap`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      .catch(() => null)
+    if (!response?.ok) return null
+    return (await response.json()) as AccountResponse
+  }
+
+  async function completeCodexAdd(label?: string) {
+    const providerMethods = sync.data.provider_auth.openai?.length
+      ? sync.data.provider_auth.openai
+      : await sdk.client.provider.auth().then((result) => result.data?.openai ?? []).catch(() => [])
+
+    const oauthMethods = providerMethods
+      .map((method, index) => ({ method, index }))
+      .filter((item) => item.method.type === "oauth")
+
+    if (oauthMethods.length === 0) {
+      DialogAlert.show(dialog, "Codex Swap", "OpenAI OAuth is not available. Use /connect first.")
+      return
+    }
+
+    const picked =
+      oauthMethods.find((item) => /chatgpt/i.test(item.method.label) && /browser/i.test(item.method.label)) ??
+      oauthMethods.find((item) => /browser/i.test(item.method.label)) ??
+      oauthMethods[0]
+
+    const auth = await sdk.client.provider.oauth.authorize({
+      providerID: "openai",
+      method: picked.index,
+    })
+    const authorization = auth.data
+    if (!authorization) {
+      DialogAlert.show(dialog, "Codex Swap", "Failed to start OpenAI OAuth")
+      return
+    }
+
+    if (authorization.method === "auto") {
+      dialog.replace(
+        () => (
+          <DialogCodexSwapOauth
+            title={picked.method.label}
+            instructions={authorization.instructions}
+            url={authorization.url}
+          />
+        ),
+      )
+      const callback = await sdk.client.provider.oauth.callback({
+        providerID: "openai",
+        method: picked.index,
+      })
+      if (callback.error) {
+        dialog.clear()
+        DialogAlert.show(dialog, "Codex Swap", "OAuth authorization failed")
+        return
+      }
+    }
+
+    if (authorization.method === "code") {
+      const code = await DialogPrompt.show(dialog, picked.method.label, {
+        placeholder: "Authorization code",
+        description: () => (
+          <box gap={1}>
+            <text fg={theme.textMuted}>{authorization.instructions}</text>
+            <Link href={authorization.url} fg={theme.primary} />
+          </box>
+        ),
+      })
+      if (!code) return
+
+      const callback = await sdk.client.provider.oauth.callback({
+        providerID: "openai",
+        method: picked.index,
+        code,
+      })
+      if (callback.error) {
+        DialogAlert.show(dialog, "Codex Swap", "OAuth authorization failed")
+        return
+      }
+    }
+
+    await sdk.client.instance.dispose().catch(() => {})
+    await sync.bootstrap()
+
+    const result = await runCodexSwapRequest({
+      action: "add",
+      ...(label ? { label } : {}),
+    })
+    if (!result) {
+      DialogAlert.show(dialog, "Codex Swap", "Failed to save account")
+      return
+    }
+
+    showUsageDialog(result)
+    if (result.error) {
+      toast.show({ variant: "warning", message: result.error, duration: 3000 })
+    } else {
+      const name = result.current?.label ?? result.current?.email ?? "account"
+      toast.show({ variant: "success", message: `Added and switched to ${name}`, duration: 2200 })
+    }
+    await sync.bootstrap()
+  }
+
   function showCodexSwap(inputText: string) {
     const parts = inputText.trim().split(/\s+/)
     const sub = (parts[1] ?? "next").toLowerCase()
@@ -230,9 +366,14 @@ export function Prompt(props: PromptProps) {
       return
     }
 
+    if (sub === "add") {
+      const label = parts.slice(2).join(" ").trim() || undefined
+      void completeCodexAdd(label)
+      return
+    }
+
     const body = (() => {
       if (sub === "next") return { action: "next" as const }
-      if (sub === "add") return { action: "add" as const, label: parts.slice(2).join(" ").trim() || undefined }
       if (sub === "use") return { action: "use" as const, selector: parts.slice(2).join(" ").trim() || undefined }
       if (parts.length === 1) return { action: "next" as const }
       return null
@@ -247,17 +388,8 @@ export function Prompt(props: PromptProps) {
       return
     }
 
-    void sdk.fetch(`${sdk.url}/provider/openai/account/swap`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    })
-      .then((response) => {
-        if (!response.ok) return null
-        return response.json()
-      })
-      .then((data) => {
-        const result = (data ?? null) as AccountResponse | null
+    void runCodexSwapRequest(body)
+      .then((result) => {
         if (!result) {
           DialogAlert.show(dialog, "Codex Swap", "Failed to switch account")
           return
