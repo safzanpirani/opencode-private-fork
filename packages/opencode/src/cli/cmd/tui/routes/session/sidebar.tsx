@@ -29,7 +29,7 @@ function formatWindow(windowDurationMins: number | null | undefined, fallbackMin
   return formatDuration(windowDurationMins ?? fallbackMins)
 }
 
-function renderBar(usedPercent: number, width = 24): string {
+function renderBar(usedPercent: number, width = 18): string {
   const percent = Math.max(0, Math.min(100, usedPercent))
   const used = Math.round((percent / 100) * width)
   return `${"━".repeat(used)}${"─".repeat(Math.max(0, width - used))}`
@@ -148,12 +148,15 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                     {(window) => {
                       const reset = `(${formatRemaining(window().resetsAt)}/${formatWindow(window().windowDurationMins, 300)})`
                       const left = `${renderBar(window().usedPercent)} ${Math.round(window().usedPercent)}%`
-                      const gap = Math.max(1, 36 - (left.length + reset.length))
                       return (
-                        <text fg={theme.textMuted}>
-                          <span style={{ fg: theme.warning }}>{left}</span>
-                          <span style={{ fg: theme.textMuted }}>{" ".repeat(gap)}{reset}</span>
-                        </text>
+                        <box flexDirection="row" justifyContent="space-between" gap={1}>
+                          <text wrapMode="none">
+                            <span style={{ fg: theme.warning }}>{left}</span>
+                          </text>
+                          <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+                            {reset}
+                          </text>
+                        </box>
                       )
                     }}
                   </Show>
@@ -161,12 +164,15 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                     {(window) => {
                       const reset = `(${formatRemaining(window().resetsAt)}/${formatWindow(window().windowDurationMins, 10_080)})`
                       const left = `${renderBar(window().usedPercent)} ${Math.round(window().usedPercent)}%`
-                      const gap = Math.max(1, 36 - (left.length + reset.length))
                       return (
-                        <text fg={theme.textMuted}>
-                          <span style={{ fg: theme.error }}>{left}</span>
-                          <span style={{ fg: theme.textMuted }}>{" ".repeat(gap)}{reset}</span>
-                        </text>
+                        <box flexDirection="row" justifyContent="space-between" gap={1}>
+                          <text wrapMode="none">
+                            <span style={{ fg: theme.error }}>{left}</span>
+                          </text>
+                          <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+                            {reset}
+                          </text>
+                        </box>
                       )
                     }}
                   </Show>
