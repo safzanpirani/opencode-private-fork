@@ -16,7 +16,22 @@ export type UsageEntry = {
   secondary: UsageWindow | null
 }
 
-export function DialogUsage(props: { entries: UsageEntry[] }) {
+export type UsageAccount = {
+  id: string | null
+  label: string | null
+  email: string | null
+  accountId: string | null
+}
+
+export type UsageProfile = {
+  id: string
+  label: string
+  email: string | null
+  accountId: string | null
+  active: boolean
+}
+
+export function DialogUsage(props: { entries: UsageEntry[]; account?: UsageAccount | null; profiles?: UsageProfile[] }) {
   const { theme } = useTheme()
 
   return (
@@ -27,6 +42,31 @@ export function DialogUsage(props: { entries: UsageEntry[] }) {
         </text>
         <text fg={theme.textMuted}>esc</text>
       </box>
+      <Show when={props.account}>
+        {(account) => (
+          <text fg={theme.textMuted}>
+            <span style={{ fg: theme.text }}>Account</span>{" "}
+            {account().label ?? account().email ?? account().accountId ?? "unknown"}
+            <Show when={account().email && account().email !== account().label}>
+              <span style={{ fg: theme.textMuted }}> · {account().email}</span>
+            </Show>
+          </text>
+        )}
+      </Show>
+      <Show when={(props.profiles?.length ?? 0) > 1}>
+        <text fg={theme.textMuted}>{props.profiles!.filter((p) => p.active).length ? "Saved profiles" : "Profiles"}</text>
+        <For each={props.profiles}>
+          {(profile, index) => (
+            <text fg={theme.textMuted}>
+              <span style={{ fg: profile.active ? theme.accent : theme.textMuted }}>{profile.active ? "●" : "○"}</span>{" "}
+              {index() + 1}. {profile.label}
+              <Show when={profile.email}>
+                <span style={{ fg: theme.textMuted }}> · {profile.email}</span>
+              </Show>
+            </text>
+          )}
+        </For>
+      </Show>
       <Show when={props.entries.length > 0} fallback={<text fg={theme.textMuted}>No usage data available.</text>}>
         <For each={props.entries}>
           {(entry) => (

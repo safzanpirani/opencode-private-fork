@@ -108,52 +108,171 @@ export function Prompt(props: PromptProps) {
     return ""
   }
 
+  type AccountResponse = {
+    current: {
+      id: string | null
+      label: string | null
+      email: string | null
+      accountId: string | null
+    } | null
+    profiles: {
+      id: string
+      label: string
+      email: string | null
+      accountId: string | null
+      active: boolean
+    }[]
+    usage: {
+      limitId: string | null
+      limitName: string | null
+      primary: {
+        usedPercent: number
+        windowDurationMins: number | null
+        resetsAt: number | null
+      } | null
+      secondary: {
+        usedPercent: number
+        windowDurationMins: number | null
+        resetsAt: number | null
+      } | null
+      planType: string | null
+    } | null
+    error?: string
+  }
+
+  function toUsageEntry(input: AccountResponse): UsageEntry[] {
+    if (!input.usage) return []
+    return [
+      {
+        provider: "openai",
+        displayName: "OpenAI",
+        planType: input.usage.planType,
+        primary: input.usage.primary
+          ? {
+              usedPercent: input.usage.primary.usedPercent,
+              windowMinutes: input.usage.primary.windowDurationMins,
+              resetsAt: input.usage.primary.resetsAt,
+            }
+          : null,
+        secondary: input.usage.secondary
+          ? {
+              usedPercent: input.usage.secondary.usedPercent,
+              windowMinutes: input.usage.secondary.windowDurationMins,
+              resetsAt: input.usage.secondary.resetsAt,
+            }
+          : null,
+      },
+    ]
+  }
+
+  function showUsageDialog(data: AccountResponse) {
+    dialog.replace(() => <DialogUsage entries={toUsageEntry(data)} account={data.current} profiles={data.profiles} />)
+  }
+
+  async function fetchAccountStatus(): Promise<AccountResponse | null> {
+    return sdk.fetch(`${sdk.url}/provider/openai/account`)
+      .then((response) => {
+        if (!response.ok) return null
+        return response.json()
+      })
+      .then((data) => (data ?? null) as AccountResponse | null)
+      .catch(() => null)
+  }
+
   function showUsage(inputText: string) {
     const parts = inputText.trim().split(/\s+/)
     const providerToken = parts.slice(1).find((part) => !part.startsWith("-"))
     const providerID = usageProvider(providerToken)
-    if (!providerID) {
-      DialogAlert.show(dialog, "Usage", `Unsupported provider: ${providerToken}`)
+    if (providerID !== "openai") {
+      DialogAlert.show(dialog, "Usage", `Unsupported provider: ${providerToken ?? "unknown"}`)
       return
     }
 
-    const refresh = parts.includes("--refresh") || parts.includes("-r")
-    const query = refresh ? `?refresh=${Date.now()}` : ""
+    void fetchAccountStatus().then((data) => {
+      if (!data) {
+        DialogAlert.show(dialog, "Usage", "Failed to fetch usage")
+        return
+      }
+      showUsageDialog(data)
+      if (data.error) {
+        toast.show({
+          variant: "warning",
+          message: data.error,
+          duration: 3000,
+        })
+      }
+    })
+  }
 
-    sdk.fetch(`${sdk.url}/provider/${providerID}/rate-limits${query}`)
+  function showCodexWho() {
+    void fetchAccountStatus().then((data) => {
+      if (!data) {
+        DialogAlert.show(dialog, "Codex", "Failed to load account status")
+        return
+      }
+      showUsageDialog(data)
+      if (data.error) {
+        toast.show({
+          variant: "warning",
+          message: data.error,
+          duration: 3000,
+        })
+      }
+    })
+  }
+
+  function showCodexSwap(inputText: string) {
+    const parts = inputText.trim().split(/\s+/)
+    const sub = (parts[1] ?? "next").toLowerCase()
+
+    if (sub === "status" || sub === "list" || sub === "who") {
+      showCodexWho()
+      return
+    }
+
+    const body = (() => {
+      if (sub === "next") return { action: "next" as const }
+      if (sub === "add") return { action: "add" as const, label: parts.slice(2).join(" ").trim() || undefined }
+      if (sub === "use") return { action: "use" as const, selector: parts.slice(2).join(" ").trim() || undefined }
+      if (parts.length === 1) return { action: "next" as const }
+      return null
+    })()
+
+    if (!body) {
+      DialogAlert.show(
+        dialog,
+        "Codex Swap",
+        "Usage:\n/codexwho\n/codexswap\n/codexswap status\n/codexswap add <label>\n/codexswap use <label|#>",
+      )
+      return
+    }
+
+    void sdk.fetch(`${sdk.url}/provider/openai/account/swap`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
       .then((response) => {
         if (!response.ok) return null
         return response.json()
       })
       .then((data) => {
-        if (!data) {
-          DialogAlert.show(dialog, "Usage", "No usage data available")
+        const result = (data ?? null) as AccountResponse | null
+        if (!result) {
+          DialogAlert.show(dialog, "Codex Swap", "Failed to switch account")
           return
         }
-
-        const entry: UsageEntry = {
-          provider: providerID,
-          displayName: "OpenAI",
-          planType: data.planType ?? null,
-          primary: data.primary
-            ? {
-                usedPercent: data.primary.usedPercent,
-                windowMinutes: data.primary.windowDurationMins,
-                resetsAt: data.primary.resetsAt,
-              }
-            : null,
-          secondary: data.secondary
-            ? {
-                usedPercent: data.secondary.usedPercent,
-                windowMinutes: data.secondary.windowDurationMins,
-                resetsAt: data.secondary.resetsAt,
-              }
-            : null,
+        showUsageDialog(result)
+        if (result.error) {
+          toast.show({ variant: "warning", message: result.error, duration: 3000 })
+        } else {
+          const label = result.current?.label ?? result.current?.email ?? "account"
+          toast.show({ variant: "success", message: `Switched to ${label}`, duration: 2000 })
         }
-        dialog.replace(() => <DialogUsage entries={[entry]} />)
+        void sync.bootstrap()
       })
       .catch(() => {
-        DialogAlert.show(dialog, "Usage", "Failed to fetch usage")
+        DialogAlert.show(dialog, "Codex Swap", "Failed to switch account")
       })
   }
 
@@ -455,6 +574,30 @@ export function Prompt(props: PromptProps) {
         },
         onSelect: (dialog) => {
           showUsage("/usage")
+          dialog.clear()
+        },
+      },
+      {
+        title: "Codex Who",
+        value: "prompt.codexwho",
+        category: "Prompt",
+        slash: {
+          name: "codexwho",
+        },
+        onSelect: (dialog) => {
+          showCodexWho()
+          dialog.clear()
+        },
+      },
+      {
+        title: "Codex Swap",
+        value: "prompt.codexswap",
+        category: "Prompt",
+        slash: {
+          name: "codexswap",
+        },
+        onSelect: (dialog) => {
+          showCodexSwap("/codexswap")
           dialog.clear()
         },
       },
@@ -817,15 +960,31 @@ export function Prompt(props: PromptProps) {
 
   async function submit() {
     if (props.disabled) return
-    if (autocomplete?.visible && !store.prompt.input.trim().startsWith("/usage")) return
-    if (!store.prompt.input) return
     const trimmed = store.prompt.input.trim()
+    if (
+      autocomplete?.visible &&
+      !trimmed.startsWith("/usage") &&
+      !trimmed.startsWith("/codexwho") &&
+      !trimmed.startsWith("/codexswap")
+    )
+      return
+    if (!store.prompt.input) return
     if (trimmed === "exit" || trimmed === "quit" || trimmed === ":q") {
       exit()
       return
     }
     if (trimmed.startsWith("/usage")) {
       showUsage(trimmed)
+      clearPrompt()
+      return
+    }
+    if (trimmed.startsWith("/codexwho")) {
+      showCodexWho()
+      clearPrompt()
+      return
+    }
+    if (trimmed.startsWith("/codexswap")) {
+      showCodexSwap(trimmed)
       clearPrompt()
       return
     }
