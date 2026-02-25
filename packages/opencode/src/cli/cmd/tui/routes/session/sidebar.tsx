@@ -138,26 +138,30 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                     <b>Codex</b>
                   </text>
                   <Show when={codexPrimary()}>
-                    {(window) => (
-                      <text fg={theme.textMuted}>
-                        <span style={{ fg: theme.warning }}>{renderBar(window().usedPercent)}</span>
-                        <span style={{ fg: theme.warning }}> {Math.round(window().usedPercent)}%</span>
-                        <span style={{ fg: theme.textMuted }}>
-                          ({formatRemaining(window().resetsAt)}/{formatWindow(window().windowDurationMins, 300)})
-                        </span>
-                      </text>
-                    )}
+                    {(window) => {
+                      const reset = `(${formatRemaining(window().resetsAt)}/${formatWindow(window().windowDurationMins, 300)})`
+                      const left = `${renderBar(window().usedPercent)} ${Math.round(window().usedPercent)}%`
+                      const gap = Math.max(1, 36 - (left.length + reset.length))
+                      return (
+                        <text fg={theme.textMuted}>
+                          <span style={{ fg: theme.warning }}>{left}</span>
+                          <span style={{ fg: theme.textMuted }}>{" ".repeat(gap)}{reset}</span>
+                        </text>
+                      )
+                    }}
                   </Show>
                   <Show when={codexSecondary()}>
-                    {(window) => (
-                      <text fg={theme.textMuted}>
-                        <span style={{ fg: theme.error }}>{renderBar(window().usedPercent)}</span>
-                        <span style={{ fg: theme.error }}> {Math.round(window().usedPercent)}%</span>
-                        <span style={{ fg: theme.textMuted }}>
-                          ({formatRemaining(window().resetsAt)}/{formatWindow(window().windowDurationMins, 10_080)})
-                        </span>
-                      </text>
-                    )}
+                    {(window) => {
+                      const reset = `(${formatRemaining(window().resetsAt)}/${formatWindow(window().windowDurationMins, 10_080)})`
+                      const left = `${renderBar(window().usedPercent)} ${Math.round(window().usedPercent)}%`
+                      const gap = Math.max(1, 36 - (left.length + reset.length))
+                      return (
+                        <text fg={theme.textMuted}>
+                          <span style={{ fg: theme.error }}>{left}</span>
+                          <span style={{ fg: theme.textMuted }}>{" ".repeat(gap)}{reset}</span>
+                        </text>
+                      )
+                    }}
                   </Show>
                 </box>
               </Show>
