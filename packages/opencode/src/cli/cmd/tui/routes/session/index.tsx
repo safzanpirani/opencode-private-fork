@@ -135,7 +135,7 @@ function usageBarParts(usedPercent: number, pacePercent: number, width: number) 
   const span = Math.max(6, width)
   const used = Math.round((clampUsagePercent(usedPercent) / 100) * span)
   const markerIndex = Math.max(0, Math.min(span - 1, Math.round((clampUsagePercent(pacePercent) / 100) * (span - 1))))
-  const chars = Array.from({ length: span }, (_, i) => (i < used ? "█" : "░"))
+  const chars = Array.from({ length: span }, (_, i) => (i < used ? "━" : "─"))
   return {
     before: chars.slice(0, markerIndex).join(""),
     marker: "│",
@@ -1211,11 +1211,9 @@ export function Session() {
                               <text fg={theme.textMuted}>
                                 <span style={{ fg: theme.text }}>5h </span>
                                 {view().elapsedLabel}/{view().windowLabel}
-                                <span style={{ fg: theme.textMuted }}> [</span>
-                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}>{view().bar.before}</span>
+                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().bar.before}</span>
                                 <span style={{ fg: view().overPace ? theme.error : theme.text }}>{view().bar.marker}</span>
                                 <span style={{ fg: view().overPace ? theme.error : theme.warning }}>{view().bar.after}</span>
-                                <span style={{ fg: theme.textMuted }}>]</span>
                                 <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().usedLabel}</span>
                               </text>
                             </box>
@@ -1227,11 +1225,9 @@ export function Session() {
                               <text fg={theme.textMuted}>
                                 <span style={{ fg: theme.text }}>7d </span>
                                 {view().elapsedLabel}/{view().windowLabel}
-                                <span style={{ fg: theme.textMuted }}> [</span>
-                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}>{view().bar.before}</span>
+                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().bar.before}</span>
                                 <span style={{ fg: view().overPace ? theme.error : theme.text }}>{view().bar.marker}</span>
                                 <span style={{ fg: view().overPace ? theme.error : theme.warning }}>{view().bar.after}</span>
-                                <span style={{ fg: theme.textMuted }}>]</span>
                                 <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().usedLabel}</span>
                               </text>
                             </box>

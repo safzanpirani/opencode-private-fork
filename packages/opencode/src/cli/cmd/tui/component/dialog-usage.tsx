@@ -47,13 +47,19 @@ export function DialogUsage(props: { entries: UsageEntry[] }) {
 
 function UsageRow(props: { label: string; window: UsageWindow }) {
   const { theme } = useTheme()
-  const percent = clampPercent(props.window.usedPercent)
-  const warn = percent >= 90
+  const used = clampPercent(props.window.usedPercent)
+  const pace = pacePercent(props.window)
+  const overPace = pace !== null && used > pace
+  const stateColor = overPace || used >= 90 ? theme.error : theme.warning
+  const parts = barParts(used, pace, 18)
+
   return (
     <text fg={theme.textMuted}>
       <span style={{ fg: theme.text }}>{props.label}</span>
-      <span style={{ fg: warn ? theme.error : theme.warning }}> {bar(percent)}</span>
-      <span style={{ fg: warn ? theme.error : theme.warning }}> {Math.round(percent)}%</span>
+      <span style={{ fg: stateColor }}> {parts.before}</span>
+      <span style={{ fg: pace === null ? stateColor : theme.text }}>{parts.marker}</span>
+      <span style={{ fg: stateColor }}>{parts.after}</span>
+      <span style={{ fg: stateColor }}> {Math.round(used)}%</span>
       <span style={{ fg: theme.textMuted }}> · resets {resetLabel(props.window.resetsAt)}</span>
     </text>
   )
@@ -75,9 +81,32 @@ function resetLabel(resetAt: number | null) {
   return `${Math.max(1, Math.round(remaining / (24 * 3600)))}d`
 }
 
-function bar(usedPercent: number, width = 18) {
-  const used = Math.round((usedPercent / 100) * width)
-  return `${"█".repeat(Math.max(0, used))}${"░".repeat(Math.max(0, width - used))}`
+function barParts(usedPercent: number, pacePercent: number | null, width: number) {
+  const span = Math.max(6, width)
+  const used = Math.round((usedPercent / 100) * span)
+  const chars = Array.from({ length: span }, (_, i) => (i < used ? "━" : "─"))
+  if (pacePercent === null) {
+    return {
+      before: chars.join(""),
+      marker: "",
+      after: "",
+    }
+  }
+
+  const markerIndex = Math.max(0, Math.min(span - 1, Math.round((pacePercent / 100) * (span - 1))))
+  return {
+    before: chars.slice(0, markerIndex).join(""),
+    marker: "│",
+    after: chars.slice(markerIndex + 1).join(""),
+  }
+}
+
+function pacePercent(window: UsageWindow) {
+  if (!window.windowMinutes || !window.resetsAt) return null
+  const total = Math.max(1, window.windowMinutes)
+  const remaining = Math.max(0, (window.resetsAt * 1000 - Date.now()) / 60000)
+  const elapsed = Math.max(0, Math.min(total, total - remaining))
+  return clampPercent((elapsed / total) * 100)
 }
 
 function clampPercent(value: number) {
