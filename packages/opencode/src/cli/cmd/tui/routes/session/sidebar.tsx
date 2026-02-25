@@ -28,7 +28,7 @@ function formatWindow(windowDurationMins: number | null | undefined, fallbackMin
   return formatDuration(windowDurationMins ?? fallbackMins)
 }
 
-function renderBar(usedPercent: number, width = 21): string {
+function renderBar(usedPercent: number, width = 24): string {
   const percent = Math.max(0, Math.min(100, usedPercent))
   const used = Math.round((percent / 100) * width)
   return `${"━".repeat(used)}${"─".repeat(Math.max(0, width - used))}`
