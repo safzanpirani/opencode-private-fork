@@ -29,10 +29,37 @@ function formatWindow(windowDurationMins: number | null | undefined, fallbackMin
   return formatDuration(windowDurationMins ?? fallbackMins)
 }
 
-function renderBar(usedPercent: number, width = 18): string {
-  const percent = Math.max(0, Math.min(100, usedPercent))
-  const used = Math.round((percent / 100) * width)
-  return `${"━".repeat(used)}${"─".repeat(Math.max(0, width - used))}`
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, value))
+}
+
+function renderBar(usedPercent: number, pacePercent: number, width = 18) {
+  const span = Math.max(6, width)
+  const used = Math.round((clampPercent(usedPercent) / 100) * span)
+  const marker = Math.max(0, Math.min(span - 1, Math.round((clampPercent(pacePercent) / 100) * (span - 1))))
+  const chars = Array.from({ length: span }, (_, i) => (i < used ? "━" : "─"))
+  return {
+    before: chars.slice(0, marker).join(""),
+    marker: "│",
+    after: chars.slice(marker + 1).join(""),
+  }
+}
+
+function usageView(
+  window: { usedPercent: number; resetsAt: number | null | undefined; windowDurationMins: number | null | undefined },
+  fallbackMins: number,
+) {
+  const mins = Math.max(1, window.windowDurationMins ?? fallbackMins)
+  const remaining = window.resetsAt ? Math.max(0, (window.resetsAt * 1000 - Date.now()) / 60000) : null
+  const elapsed = remaining === null ? null : Math.max(0, Math.min(mins, mins - remaining))
+  const used = clampPercent(window.usedPercent)
+  const pace = elapsed === null ? 0 : clampPercent((elapsed / mins) * 100)
+  return {
+    bar: renderBar(used, pace),
+    usedLabel: `${Math.round(used)}%`,
+    overPace: elapsed !== null && used > pace,
+    resetLabel: `(${formatRemaining(window.resetsAt)}/${formatWindow(window.windowDurationMins, fallbackMins)})`,
+  }
 }
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
@@ -146,15 +173,18 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                   </text>
                   <Show when={codexPrimary()}>
                     {(window) => {
-                      const reset = `(${formatRemaining(window().resetsAt)}/${formatWindow(window().windowDurationMins, 300)})`
-                      const left = `${renderBar(window().usedPercent)} ${Math.round(window().usedPercent)}%`
+                      const view = usageView(window(), 300)
+                      const barColor = view.overPace ? theme.error : theme.warning
                       return (
                         <box flexDirection="row" justifyContent="space-between" gap={1}>
                           <text wrapMode="none">
-                            <span style={{ fg: theme.warning }}>{left}</span>
+                            <span style={{ fg: barColor }}>{view.bar.before}</span>
+                            <span style={{ fg: view.overPace ? theme.error : theme.text }}>{view.bar.marker}</span>
+                            <span style={{ fg: barColor }}>{view.bar.after}</span>
+                            <span style={{ fg: barColor }}> {view.usedLabel}</span>
                           </text>
                           <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
-                            {reset}
+                            {view.resetLabel}
                           </text>
                         </box>
                       )
@@ -162,15 +192,18 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
                   </Show>
                   <Show when={codexSecondary()}>
                     {(window) => {
-                      const reset = `(${formatRemaining(window().resetsAt)}/${formatWindow(window().windowDurationMins, 10_080)})`
-                      const left = `${renderBar(window().usedPercent)} ${Math.round(window().usedPercent)}%`
+                      const view = usageView(window(), 10_080)
+                      const barColor = view.overPace ? theme.error : theme.warning
                       return (
                         <box flexDirection="row" justifyContent="space-between" gap={1}>
                           <text wrapMode="none">
-                            <span style={{ fg: theme.error }}>{left}</span>
+                            <span style={{ fg: barColor }}>{view.bar.before}</span>
+                            <span style={{ fg: view.overPace ? theme.error : theme.text }}>{view.bar.marker}</span>
+                            <span style={{ fg: barColor }}>{view.bar.after}</span>
+                            <span style={{ fg: barColor }}> {view.usedLabel}</span>
                           </text>
                           <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
-                            {reset}
+                            {view.resetLabel}
                           </text>
                         </box>
                       )
