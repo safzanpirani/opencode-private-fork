@@ -517,6 +517,32 @@ export function Prompt(props: PromptProps) {
     return queuedPromptsForSession().find((item) => item.id === id)
   })
 
+  function showQueue() {
+    const list = queuedPromptsForSession()
+    if (list.length === 0) {
+      DialogAlert.show(dialog, "Queue", "No end-loop messages queued.")
+      return
+    }
+
+    const gate = queueGate()
+    const paused = gate !== "open"
+    const state = paused ? "paused" : "open"
+    const note = gate === "wait_busy" || gate === "wait_idle" ? " (resumes after current manual turn)" : ""
+    const lines = list.map((item, index) => {
+      const model = `${item.model.providerID}/${item.model.modelID}`
+      const variant = item.variant ? ` · ${item.variant}` : ""
+      return `${index + 1}. ${queuedPreview(item.inputText)}\n   ${item.agent} · ${model}${variant}`
+    })
+
+    DialogAlert.show(
+      dialog,
+      "Queue",
+      [`Status: ${state}${note}`, `${list.length} end-loop message${list.length === 1 ? "" : "s"}`, "", ...lines].join(
+        "\n",
+      ),
+    )
+  }
+
   createEffect(
     on(
       () => props.sessionID,
@@ -742,6 +768,18 @@ export function Prompt(props: PromptProps) {
         },
         onSelect: (dialog) => {
           showUsage("/usage")
+          dialog.clear()
+        },
+      },
+      {
+        title: "Queue",
+        value: "prompt.queue",
+        category: "Prompt",
+        slash: {
+          name: "queue",
+        },
+        onSelect: (dialog) => {
+          showQueue()
           dialog.clear()
         },
       },
@@ -1146,6 +1184,7 @@ export function Prompt(props: PromptProps) {
     if (
       autocomplete?.visible &&
       !trimmed.startsWith("/usage") &&
+      !trimmed.startsWith("/queue") &&
       !trimmed.startsWith("/codexwho") &&
       !trimmed.startsWith("/codexswap")
     )
@@ -1157,6 +1196,11 @@ export function Prompt(props: PromptProps) {
     }
     if (trimmed.startsWith("/usage")) {
       showUsage(trimmed)
+      clearPrompt()
+      return
+    }
+    if (trimmed.startsWith("/queue")) {
+      showQueue()
       clearPrompt()
       return
     }
