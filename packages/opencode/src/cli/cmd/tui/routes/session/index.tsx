@@ -1204,17 +1204,17 @@ export function Session() {
                   <Show
                     when={codexPrimaryView() || codexSecondaryView()}
                     fallback={
-                      <text fg={theme.textMuted}>
+                      <text fg={theme.textMuted} wrapMode="none">
                         <span style={{ fg: theme.accent }}>Codex</span> usage unavailable
                       </text>
                     }
                   >
-                    <box flexDirection="row" gap={2}>
-                      <text fg={theme.accent}>Codex</text>
+                    <box flexDirection="row" gap={2} height={1}>
+                      <text fg={theme.accent} wrapMode="none">Codex</text>
                       <Show when={codexPrimaryView()}>
                         {(view) => (
                           <box flexGrow={1}>
-                            <text fg={theme.textMuted}>
+                            <text fg={theme.textMuted} wrapMode="none">
                               <span style={{ fg: theme.text }}>5h </span>
                               {view().elapsedLabel}/{view().windowLabel}
                               <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().bar.before}</span>
@@ -1228,7 +1228,7 @@ export function Session() {
                       <Show when={codexSecondaryView()}>
                         {(view) => (
                           <box flexGrow={1}>
-                            <text fg={theme.textMuted}>
+                            <text fg={theme.textMuted} wrapMode="none">
                               <span style={{ fg: theme.text }}>7d </span>
                               {view().elapsedLabel}/{view().windowLabel}
                               <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().bar.before}</span>
