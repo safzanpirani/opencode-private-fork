@@ -370,8 +370,8 @@ export function Session() {
   const codexWindowCount = createMemo(() => (codexPrimary() ? 1 : 0) + (codexSecondary() ? 1 : 0))
   const codexBarWidth = createMemo(() => {
     const panes = Math.max(1, codexWindowCount())
-    const available = Math.max(16, Math.floor((contentWidth() - 20) / panes))
-    return Math.max(10, Math.min(22, available))
+    const available = Math.max(20, contentWidth() - 8)
+    return Math.max(8, Math.floor(available / panes) - 16)
   })
   const codexPrimaryView = createMemo(() => {
     const window = codexPrimary()
@@ -1200,42 +1200,47 @@ export function Session() {
                   (codexModel() || codexPrimary() || codexSecondary())
                 }
               >
-                <box paddingLeft={1} paddingRight={1}>
-                  <box gap={0}>
-                    <text fg={theme.accent}>Codex</text>
-                    <Show when={codexPrimaryView() || codexSecondaryView()} fallback={<text fg={theme.textMuted}>usage unavailable</text>}>
-                      <box flexDirection="row" gap={2}>
-                        <Show when={codexPrimaryView()}>
-                          {(view) => (
-                            <box flexGrow={1}>
-                              <text fg={theme.textMuted}>
-                                <span style={{ fg: theme.text }}>5h </span>
-                                {view().elapsedLabel}/{view().windowLabel}
-                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().bar.before}</span>
-                                <span style={{ fg: view().overPace ? theme.error : theme.text }}>{view().bar.marker}</span>
-                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}>{view().bar.after}</span>
-                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().usedLabel}</span>
-                              </text>
-                            </box>
-                          )}
-                        </Show>
-                        <Show when={codexSecondaryView()}>
-                          {(view) => (
-                            <box flexGrow={1}>
-                              <text fg={theme.textMuted}>
-                                <span style={{ fg: theme.text }}>7d </span>
-                                {view().elapsedLabel}/{view().windowLabel}
-                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().bar.before}</span>
-                                <span style={{ fg: view().overPace ? theme.error : theme.text }}>{view().bar.marker}</span>
-                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}>{view().bar.after}</span>
-                                <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().usedLabel}</span>
-                              </text>
-                            </box>
-                          )}
-                        </Show>
-                      </box>
-                    </Show>
-                  </box>
+                <box paddingLeft={1} paddingRight={1} paddingBottom={1}>
+                  <Show
+                    when={codexPrimaryView() || codexSecondaryView()}
+                    fallback={
+                      <text fg={theme.textMuted}>
+                        <span style={{ fg: theme.accent }}>Codex</span> usage unavailable
+                      </text>
+                    }
+                  >
+                    <box flexDirection="row" gap={2}>
+                      <text fg={theme.accent}>Codex</text>
+                      <Show when={codexPrimaryView()}>
+                        {(view) => (
+                          <box flexGrow={1}>
+                            <text fg={theme.textMuted}>
+                              <span style={{ fg: theme.text }}>5h </span>
+                              {view().elapsedLabel}/{view().windowLabel}
+                              <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().bar.before}</span>
+                              <span style={{ fg: view().overPace ? theme.error : theme.text }}>{view().bar.marker}</span>
+                              <span style={{ fg: view().overPace ? theme.error : theme.warning }}>{view().bar.after}</span>
+                              <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().usedLabel}</span>
+                            </text>
+                          </box>
+                        )}
+                      </Show>
+                      <Show when={codexSecondaryView()}>
+                        {(view) => (
+                          <box flexGrow={1}>
+                            <text fg={theme.textMuted}>
+                              <span style={{ fg: theme.text }}>7d </span>
+                              {view().elapsedLabel}/{view().windowLabel}
+                              <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().bar.before}</span>
+                              <span style={{ fg: view().overPace ? theme.error : theme.text }}>{view().bar.marker}</span>
+                              <span style={{ fg: view().overPace ? theme.error : theme.warning }}>{view().bar.after}</span>
+                              <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().usedLabel}</span>
+                            </text>
+                          </box>
+                        )}
+                      </Show>
+                    </box>
+                  </Show>
                 </box>
               </Show>
               <Prompt

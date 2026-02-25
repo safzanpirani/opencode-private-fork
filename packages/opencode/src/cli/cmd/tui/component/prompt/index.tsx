@@ -205,6 +205,18 @@ export function Prompt(props: PromptProps) {
     interrupt: 0,
   })
 
+  type QueuedPrompt = {
+    sessionID: string
+    inputText: string
+    parts: PromptInfo["parts"]
+    agent: string
+    model: { providerID: string; modelID: string }
+    variant?: string
+  }
+
+  const [queuedPrompts, setQueuedPrompts] = createSignal<QueuedPrompt[]>([])
+  const [sendingQueuedPrompt, setSendingQueuedPrompt] = createSignal(false)
+
   createEffect(
     on(
       () => props.sessionID,
@@ -605,6 +617,136 @@ export function Prompt(props: PromptProps) {
     },
   ])
 
+  function resolvePromptInput() {
+    let inputText = store.prompt.input
+    const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
+    const sortedExtmarks = allExtmarks.sort((a: { start: number }, b: { start: number }) => b.start - a.start)
+
+    for (const extmark of sortedExtmarks) {
+      const partIndex = store.extmarkToPartIndex.get(extmark.id)
+      if (partIndex !== undefined) {
+        const part = store.prompt.parts[partIndex]
+        if (part?.type === "text" && part.text) {
+          const before = inputText.slice(0, extmark.start)
+          const after = inputText.slice(extmark.end)
+          inputText = before + part.text + after
+        }
+      }
+    }
+
+    return {
+      inputText,
+      nonTextParts: store.prompt.parts.filter((part) => part.type !== "text"),
+    }
+  }
+
+  function sendPrompt(input: {
+    sessionID: string
+    model: { providerID: string; modelID: string }
+    variant?: string
+    agent: string
+    inputText: string
+    parts: PromptInfo["parts"]
+    messageID?: string
+  }) {
+    return sdk.client.session.prompt({
+      sessionID: input.sessionID,
+      ...input.model,
+      messageID: input.messageID ?? Identifier.ascending("message"),
+      agent: input.agent,
+      model: input.model,
+      variant: input.variant,
+      parts: [
+        {
+          id: Identifier.ascending("part"),
+          type: "text",
+          text: input.inputText,
+        },
+        ...input.parts.map((x) => ({
+          id: Identifier.ascending("part"),
+          ...x,
+        })),
+      ],
+    })
+  }
+
+  function queueAtEndOfLoop() {
+    if (props.disabled) return
+    if (autocomplete?.visible) return
+    if (!props.sessionID || status().type === "idle" || store.mode !== "normal") {
+      void submit()
+      return
+    }
+
+    const trimmed = store.prompt.input.trim()
+    if (!trimmed || trimmed.startsWith("/")) {
+      void submit()
+      return
+    }
+
+    const selectedModel = local.model.current()
+    if (!selectedModel) {
+      promptModelWarning()
+      return
+    }
+
+    const payload = resolvePromptInput()
+    const queued = queuedPrompts().length + 1
+    setQueuedPrompts((list) => [
+      ...list,
+      {
+        sessionID: props.sessionID!,
+        inputText: payload.inputText,
+        parts: payload.nonTextParts,
+        agent: local.agent.current().name,
+        model: {
+          providerID: selectedModel.providerID,
+          modelID: selectedModel.modelID,
+        },
+        variant: local.model.variant.current(),
+      },
+    ])
+
+    history.append({
+      ...store.prompt,
+      mode: store.mode,
+    })
+    clearPrompt()
+    toast.show({
+      variant: "info",
+      message: `Queued for end of loop (${queued})`,
+      duration: 2000,
+    })
+  }
+
+  createEffect(() => {
+    if (sendingQueuedPrompt()) return
+    if (status().type !== "idle") return
+    const next = queuedPrompts()[0]
+    if (!next) return
+
+    setSendingQueuedPrompt(true)
+    setQueuedPrompts((list) => list.slice(1))
+    sendPrompt({
+      sessionID: next.sessionID,
+      model: next.model,
+      variant: next.variant,
+      agent: next.agent,
+      inputText: next.inputText,
+      parts: next.parts,
+    })
+      .catch(() => {
+        toast.show({
+          variant: "error",
+          message: "Failed to send queued prompt",
+          duration: 3000,
+        })
+      })
+      .finally(() => {
+        setSendingQueuedPrompt(false)
+      })
+  })
+
   async function submit() {
     if (props.disabled) return
     if (autocomplete?.visible && !store.prompt.input.trim().startsWith("/usage")) return
@@ -631,26 +773,9 @@ export function Prompt(props: PromptProps) {
           return sessionID
         })()
     const messageID = Identifier.ascending("message")
-    let inputText = store.prompt.input
-
-    // Expand pasted text inline before submitting
-    const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
-    const sortedExtmarks = allExtmarks.sort((a: { start: number }, b: { start: number }) => b.start - a.start)
-
-    for (const extmark of sortedExtmarks) {
-      const partIndex = store.extmarkToPartIndex.get(extmark.id)
-      if (partIndex !== undefined) {
-        const part = store.prompt.parts[partIndex]
-        if (part?.type === "text" && part.text) {
-          const before = inputText.slice(0, extmark.start)
-          const after = inputText.slice(extmark.end)
-          inputText = before + part.text + after
-        }
-      }
-    }
-
-    // Filter out text parts (pasted content) since they're now expanded inline
-    const nonTextParts = store.prompt.parts.filter((part) => part.type !== "text")
+    const payload = resolvePromptInput()
+    const inputText = payload.inputText
+    const nonTextParts = payload.nonTextParts
 
     // Capture mode before it gets reset
     const currentMode = store.mode
@@ -698,27 +823,15 @@ export function Prompt(props: PromptProps) {
           })),
       })
     } else {
-      sdk.client.session
-        .prompt({
-          sessionID,
-          ...selectedModel,
-          messageID,
-          agent: local.agent.current().name,
-          model: selectedModel,
-          variant,
-          parts: [
-            {
-              id: Identifier.ascending("part"),
-              type: "text",
-              text: inputText,
-            },
-            ...nonTextParts.map((x) => ({
-              id: Identifier.ascending("part"),
-              ...x,
-            })),
-          ],
-        })
-        .catch(() => {})
+      sendPrompt({
+        sessionID,
+        model: selectedModel,
+        messageID,
+        agent: local.agent.current().name,
+        variant,
+        inputText,
+        parts: nonTextParts,
+      }).catch(() => {})
     }
     history.append({
       ...store.prompt,
@@ -921,6 +1034,13 @@ export function Prompt(props: PromptProps) {
                   e.preventDefault()
                   return
                 }
+
+                if (e.name === "return" && e.meta) {
+                  e.preventDefault()
+                  queueAtEndOfLoop()
+                  return
+                }
+
                 // Handle clipboard paste (Ctrl+V) - check for images first on Windows
                 // This is needed because Windows terminal doesn't properly send image data
                 // through bracketed paste, so we need to intercept the keypress and
