@@ -503,6 +503,7 @@ export function Prompt(props: PromptProps) {
   const [sendingQueuedPrompt, setSendingQueuedPrompt] = createSignal(false)
   const [queuedEditID, setQueuedEditID] = createSignal<string>()
   const [queuedCursor, setQueuedCursor] = createSignal<number>()
+  const [queueGate, setQueueGate] = createSignal<"open" | "paused" | "wait_busy" | "wait_idle">("open")
 
   const queuedPromptsForSession = createMemo(() => {
     const sessionID = props.sessionID
@@ -521,6 +522,7 @@ export function Prompt(props: PromptProps) {
       () => props.sessionID,
       () => {
         setStore("placeholder", Math.floor(Math.random() * PLACEHOLDERS.length))
+        setQueueGate("open")
       },
       { defer: true },
     ),
@@ -616,6 +618,7 @@ export function Prompt(props: PromptProps) {
             sdk.client.session.abort({
               sessionID: props.sessionID,
             })
+            setQueueGate("paused")
             setStore("interrupt", 0)
           }
           dialog.clear()
@@ -1085,6 +1088,20 @@ export function Prompt(props: PromptProps) {
   })
 
   createEffect(() => {
+    const gate = queueGate()
+    if (gate === "open" || gate === "paused") return
+    const current = status().type
+    if (gate === "wait_busy") {
+      if (current === "idle") return
+      setQueueGate("wait_idle")
+      return
+    }
+    if (current !== "idle") return
+    setQueueGate("open")
+  })
+
+  createEffect(() => {
+    if (queueGate() !== "open") return
     if (sendingQueuedPrompt()) return
     if (queuedEditID()) return
     if (status().type !== "idle") return
@@ -1198,6 +1215,7 @@ export function Prompt(props: PromptProps) {
           return sessionID
         })()
     const messageID = Identifier.ascending("message")
+    if (queueGate() === "paused") setQueueGate("wait_busy")
 
     // Capture mode before it gets reset
     const currentMode = store.mode
