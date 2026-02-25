@@ -51,8 +51,8 @@ Set up this OpenCode fork so it runs like a native command named `ocx`.
 Requirements:
 1) Clone this fork to ~/Development/opencode-fork (or keep existing clone if present).
 2) Install dependencies with bun.
-3) Create executable launcher at ~/.local/bin/ocx that runs:
-   bun run --cwd "<ABSOLUTE_PATH_TO_REPO>/packages/opencode" --conditions=browser src/index.ts "$@"
+3) Create executable launcher at ~/.local/bin/ocx that starts OpenCode in the directory where `ocx` is run (unless a path is explicitly passed), while executing from this repo:
+   bun run --cwd "<ABSOLUTE_PATH_TO_REPO>/packages/opencode" --conditions=browser src/index.ts "$PWD" "$@"
 4) Ensure ~/.local/bin is in PATH (append to shell rc if missing).
 5) chmod +x ~/.local/bin/ocx
 6) Verify with:
@@ -77,7 +77,17 @@ bun install
 mkdir -p ~/.local/bin
 cat > ~/.local/bin/ocx <<'EOF'
 #!/usr/bin/env bash
-exec bun run --cwd "$HOME/Development/opencode-fork/packages/opencode" --conditions=browser src/index.ts "$@"
+set -euo pipefail
+
+REPO="$HOME/Development/opencode-fork"
+
+# Default to the directory you run ocx from.
+# If the first argument is a positional path/subcommand, keep args unchanged.
+if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
+  exec bun run --cwd "$REPO/packages/opencode" --conditions=browser src/index.ts "$PWD" "$@"
+fi
+
+exec bun run --cwd "$REPO/packages/opencode" --conditions=browser src/index.ts "$@"
 EOF
 chmod +x ~/.local/bin/ocx
 
@@ -90,6 +100,75 @@ source ~/.zshrc
 command -v ocx
 ocx --help
 ```
+
+## Fork-specific features (Codex usage + queue UX)
+
+> [!NOTE]
+> This section documents **fork-only behavior** added in this repository. Upstream `anomalyco/opencode` may not include these changes.
+
+### 1) Always-visible Codex usage meters
+
+This fork surfaces Codex usage in three places:
+
+- **Session strip above the prompt** (always visible during chat)
+- **Session sidebar → Context → Codex**
+- **`/usage` dialog**
+
+What the values mean:
+
+- `(<remaining>/<window>)` format, for example `(1.2h/5.0h)` and `(5.3d/7.0d)`
+- `│` inside the bar = expected pace marker for current time in window
+- Percent (`23%`) = actual consumed usage
+- Colors:
+  - warning color = within expected pace
+  - error color = usage is ahead of expected pace (higher risk of hitting limit)
+
+### 2) `/usage` command
+
+Show current provider usage snapshot in a dialog:
+
+```bash
+/usage
+/usage openai
+/usage codex
+/usage --refresh
+```
+
+Notes:
+
+- Default provider is OpenAI/Codex.
+- `--refresh` forces a fresh fetch instead of relying on cached state.
+
+### 3) Message queue behavior (fork custom)
+
+This fork supports two queue modes:
+
+- **Enter** → queue/send immediately (default OpenCode behavior)
+- **Option/Alt + Enter** → queue for **end of current agent loop** (tail queue)
+
+Tail-queue editing hotkeys:
+
+- **Option/Alt + Up** → load queued tail message into input (newest first)
+- **Option/Alt + Down** → move in reverse
+- **Enter while editing a queued tail message** → updates that queued item **in place** (keeps original execution order)
+
+A pinned muted preview is shown near the prompt when tail-queued messages exist.
+
+### 4) Quick example
+
+If queued order is:
+
+1. `message 1`
+2. `message 2`
+3. `message 3`
+
+Edit `message 2` via Option/Alt+Up/Down and press Enter after editing to `message 2xyz`.
+
+Final queue order remains:
+
+1. `message 1`
+2. `message 2xyz`
+3. `message 3`
 
 [![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
 
