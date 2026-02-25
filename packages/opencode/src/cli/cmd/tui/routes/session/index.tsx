@@ -370,8 +370,8 @@ export function Session() {
   const codexWindowCount = createMemo(() => (codexPrimary() ? 1 : 0) + (codexSecondary() ? 1 : 0))
   const codexBarWidth = createMemo(() => {
     const panes = Math.max(1, codexWindowCount())
-    const available = Math.max(20, contentWidth() - 8)
-    return Math.max(8, Math.floor(available / panes) - 16)
+    const available = Math.max(16, Math.floor((contentWidth() - 20) / panes))
+    return Math.max(10, Math.min(22, available))
   })
   const codexPrimaryView = createMemo(() => {
     const window = codexPrimary()
