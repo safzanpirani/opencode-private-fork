@@ -153,8 +153,6 @@ function usageWindowView(window: UsageWindow, fallbackMins: number, barWidth: nu
     elapsedLabel: elapsedMins === null ? "--" : formatUsageElapsed(elapsedMins),
     windowLabel: formatUsageWindow(windowMins),
     usedLabel: `${Math.round(usedPercent)}%`,
-    paceLabel: `${Math.round(pacePercent)}%`,
-    pacePercent,
     overPace: elapsedMins !== null && usedPercent > pacePercent,
     bar: usageBarParts(usedPercent, pacePercent, barWidth),
   }
@@ -1202,7 +1200,7 @@ export function Session() {
                   (codexModel() || codexPrimary() || codexSecondary())
                 }
               >
-                <box marginBottom={1} paddingLeft={1} paddingRight={1} border={["top", "bottom"]} borderColor={theme.borderSubtle}>
+                <box paddingLeft={1} paddingRight={1}>
                   <box gap={0}>
                     <text fg={theme.accent}>Codex</text>
                     <Show when={codexPrimaryView() || codexSecondaryView()} fallback={<text fg={theme.textMuted}>usage unavailable</text>}>
@@ -1219,7 +1217,6 @@ export function Session() {
                                 <span style={{ fg: view().overPace ? theme.error : theme.warning }}>{view().bar.after}</span>
                                 <span style={{ fg: theme.textMuted }}>]</span>
                                 <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().usedLabel}</span>
-                                <span style={{ fg: theme.textMuted }}> · pace {view().paceLabel}</span>
                               </text>
                             </box>
                           )}
@@ -1236,7 +1233,6 @@ export function Session() {
                                 <span style={{ fg: view().overPace ? theme.error : theme.warning }}>{view().bar.after}</span>
                                 <span style={{ fg: theme.textMuted }}>]</span>
                                 <span style={{ fg: view().overPace ? theme.error : theme.warning }}> {view().usedLabel}</span>
-                                <span style={{ fg: theme.textMuted }}> · pace {view().paceLabel}</span>
                               </text>
                             </box>
                           )}
