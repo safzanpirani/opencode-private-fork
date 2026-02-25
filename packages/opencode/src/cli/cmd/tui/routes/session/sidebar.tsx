@@ -1,4 +1,5 @@
 import { useSync } from "@tui/context/sync"
+import { useLocal } from "@tui/context/local"
 import { createMemo, For, Show, Switch, Match } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTheme } from "../../context/theme"
@@ -36,6 +37,7 @@ function renderBar(usedPercent: number, width = 24): string {
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
+  const local = useLocal()
   const { theme } = useTheme()
   const session = createMemo(() => sync.session.get(props.sessionID)!)
   const diff = createMemo(() => sync.data.session_diff[props.sessionID] ?? [])
@@ -82,6 +84,11 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     }
   })
 
+  const codexModel = createMemo(() => {
+    const model = local.model.current()
+    if (!model) return false
+    return model.providerID === "openai"
+  })
   const codexLimit = createMemo(() => sync.data.provider_rate_limit["openai"])
   const codexPrimary = createMemo(() => codexLimit()?.primary ?? null)
   const codexSecondary = createMemo(() => codexLimit()?.secondary ?? null)
@@ -132,7 +139,7 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
               <text fg={theme.textMuted}>{context()?.percentage ?? 0}% used</text>
               <text fg={theme.textMuted}>{cost()} spent</text>
 
-              <Show when={codexPrimary() || codexSecondary()}>
+              <Show when={codexModel() && (codexPrimary() || codexSecondary())}>
                 <box marginTop={1} gap={0}>
                   <text fg={theme.accent}>
                     <b>Codex</b>

@@ -361,8 +361,7 @@ export function Session() {
   const codexModel = createMemo(() => {
     const model = local.model.current()
     if (!model) return false
-    if (model.providerID !== "openai") return false
-    return model.modelID.includes("codex")
+    return model.providerID === "openai"
   })
   const codexLimit = createMemo(() => sync.data.provider_rate_limit["openai"])
   const codexPrimary = createMemo(() => codexLimit()?.primary ?? null)
@@ -1197,7 +1196,7 @@ export function Session() {
                   !session()?.parentID &&
                   permissions().length === 0 &&
                   questions().length === 0 &&
-                  (codexModel() || codexPrimary() || codexSecondary())
+                  codexModel()
                 }
               >
                 <box paddingLeft={1} paddingRight={1} paddingBottom={1}>
