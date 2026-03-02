@@ -101,6 +101,105 @@ command -v ocx
 ocx --help
 ```
 
+### Windows setup (PowerShell)
+
+```powershell
+# 1) Clone
+ git clone <YOUR_FORK_URL> $HOME\Development\opencode-fork
+
+# 2) Install deps
+ Set-Location $HOME\Development\opencode-fork
+ bun install
+
+# 3) Create native launcher command (ocx.cmd)
+ New-Item -ItemType Directory -Force $HOME\bin | Out-Null
+ @'
+@echo off
+setlocal
+set "REPO=%USERPROFILE%\Development\opencode-fork"
+
+REM Default to the directory you run ocx from when first arg is missing or an option.
+if "%~1"=="" (
+  bun run --cwd "%REPO%\packages\opencode" --conditions=browser src/index.ts "%CD%"
+  exit /b %errorlevel%
+)
+if "%~1"=="-" (
+  bun run --cwd "%REPO%\packages\opencode" --conditions=browser src/index.ts "%CD%" %*
+  exit /b %errorlevel%
+)
+if "%~1"=="--help" (
+  bun run --cwd "%REPO%\packages\opencode" --conditions=browser src/index.ts "%CD%" %*
+  exit /b %errorlevel%
+)
+
+bun run --cwd "%REPO%\packages\opencode" --conditions=browser src/index.ts %*
+'@ | Set-Content -Encoding ascii $HOME\bin\ocx.cmd
+
+# 4) Ensure %USERPROFILE%\bin is in PATH (current session + future sessions)
+if (-not ($env:Path -split ';' | Where-Object { $_ -eq "$HOME\bin" })) {
+  $env:Path = "$HOME\bin;" + $env:Path
+}
+$machinePath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (($machinePath -split ';') -notcontains "$HOME\bin") {
+  [Environment]::SetEnvironmentVariable("Path", "$HOME\bin;$machinePath", "User")
+}
+
+# 5) Verify
+Get-Command ocx
+ocx --help
+```
+
+> [!NOTE]
+> If `bun` is not found in `ocx.cmd`, reinstall Bun and restart your terminal so `%USERPROFILE%\.bun\bin` is on PATH.
+
+### Windows shell aliases for `ocx`
+
+If you prefer aliases instead of a wrapper script, use one of the following.
+
+#### PowerShell alias (persistent)
+
+```powershell
+# Create profile if missing
+if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null }
+
+# Add function + alias
+@'
+function Invoke-Ocx {
+  $repo = "$HOME\Development\opencode-fork"
+  if ($args.Count -eq 0 -or $args[0].StartsWith("-")) {
+    bun run --cwd "$repo\packages\opencode" --conditions=browser src/index.ts "$PWD" @args
+    return
+  }
+  bun run --cwd "$repo\packages\opencode" --conditions=browser src/index.ts @args
+}
+Set-Alias ocx Invoke-Ocx
+'@ | Add-Content $PROFILE
+
+# Reload profile
+. $PROFILE
+ocx --help
+```
+
+#### CMD alias (doskey macro)
+
+```bat
+:: Create macro file
+mkdir "%USERPROFILE%\bin" 2>nul
+(
+  echo doskey ocx=bun run --cwd "%USERPROFILE%\Development\opencode-fork\packages\opencode" --conditions=browser src/index.ts $*
+) > "%USERPROFILE%\bin\ocx-macros.cmd"
+
+:: Load now (current CMD window)
+doskey /macrofile="%USERPROFILE%\bin\ocx-macros.cmd"
+ocx --help
+
+:: Persist for future CMD windows
+reg add "HKCU\Software\Microsoft\Command Processor" /v AutoRun /t REG_SZ /d "doskey /macrofile=\"%USERPROFILE%\bin\ocx-macros.cmd\"" /f
+```
+
+> [!TIP]
+> `doskey` macros only work inside `cmd.exe` sessions (not PowerShell).
+
 ## Fork-specific features (Codex usage + queue UX)
 
 > [!NOTE]
