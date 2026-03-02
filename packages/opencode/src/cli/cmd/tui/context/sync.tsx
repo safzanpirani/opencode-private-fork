@@ -25,9 +25,23 @@ import { createSimpleContext } from "./helper"
 import type { Snapshot } from "@/snapshot"
 import { useExit } from "./exit"
 import { useArgs } from "./args"
-import { batch, onMount } from "solid-js"
+import { batch, onCleanup, onMount } from "solid-js"
 import { Log } from "@/util/log"
 import type { Path } from "@opencode-ai/sdk"
+
+type ProviderRateLimitWindow = {
+  usedPercent: number
+  windowDurationMins: number | null
+  resetsAt: number | null
+}
+
+type ProviderRateLimit = {
+  limitId: string | null
+  limitName: string | null
+  primary: ProviderRateLimitWindow | null
+  secondary: ProviderRateLimitWindow | null
+  planType: string | null
+}
 
 export const { use: useSync, provider: SyncProvider } = createSimpleContext({
   name: "Sync",
@@ -38,6 +52,9 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
       provider_default: Record<string, string>
       provider_next: ProviderListResponse
       provider_auth: Record<string, ProviderAuthMethod[]>
+      provider_rate_limit: {
+        [providerID: string]: ProviderRateLimit | null
+      }
       agent: Agent[]
       command: Command[]
       permission: {
@@ -80,6 +97,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
         connected: [],
       },
       provider_auth: {},
+      provider_rate_limit: {},
       config: {},
       status: "loading",
       agent: [],
@@ -262,6 +280,14 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               )
             })
           }
+
+          if (
+            event.properties.info.role === "assistant" &&
+            "providerID" in event.properties.info &&
+            event.properties.info.providerID === "openai"
+          ) {
+            void syncRateLimits()
+          }
           break
         }
         case "message.removed": {
@@ -345,6 +371,25 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     const exit = useExit()
     const args = useArgs()
+    let syncingRateLimits = false
+
+    async function syncRateLimits() {
+      if (syncingRateLimits) return
+      syncingRateLimits = true
+
+      await sdk.fetch(`${sdk.url}/provider/openai/rate-limits`)
+        .then((response) => {
+          if (!response.ok) return null
+          return response.json()
+        })
+        .then((data) => {
+          const value = (data ?? null) as ProviderRateLimit | null
+          setStore("provider_rate_limit", "openai", reconcile(value))
+        })
+        .catch(() => {})
+
+      syncingRateLimits = false
+    }
 
     async function bootstrap() {
       console.log("bootstrapping")
@@ -411,6 +456,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               setStore("session_status", reconcile(x.data!))
             }),
             sdk.client.provider.auth().then((x) => setStore("provider_auth", reconcile(x.data ?? {}))),
+            syncRateLimits(),
             sdk.client.vcs.get().then((x) => setStore("vcs", reconcile(x.data))),
             sdk.client.path.get().then((x) => setStore("path", reconcile(x.data!))),
           ]).then(() => {
@@ -429,6 +475,10 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     onMount(() => {
       bootstrap()
+      const interval = setInterval(() => {
+        void syncRateLimits()
+      }, 60_000)
+      onCleanup(() => clearInterval(interval))
     })
 
     const fullSyncedSessions = new Set<string>()

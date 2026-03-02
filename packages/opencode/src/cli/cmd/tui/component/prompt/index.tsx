@@ -1,5 +1,5 @@
 import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, t, dim, fg } from "@opentui/core"
-import { createEffect, createMemo, type JSX, onMount, createSignal, onCleanup, on, Show, Switch, Match } from "solid-js"
+import { createEffect, createMemo, type JSX, onMount, createSignal, onCleanup, on, Show, Switch, Match, For } from "solid-js"
 import "opentui-spinner/solid"
 import path from "path"
 import { Filesystem } from "@/util/filesystem"
@@ -30,10 +30,13 @@ import { createColors, createFrames } from "../../ui/spinner.ts"
 import { useDialog } from "@tui/ui/dialog"
 import { DialogProvider as DialogProviderConnect } from "../dialog-provider"
 import { DialogAlert } from "../../ui/dialog-alert"
+import { DialogPrompt } from "../../ui/dialog-prompt"
+import { Link } from "../../ui/link"
 import { useToast } from "../../ui/toast"
 import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
+import { DialogUsage, type UsageEntry } from "../dialog-usage"
 
 export type PromptProps = {
   sessionID?: string
@@ -57,6 +60,29 @@ export type PromptRef = {
 
 const PLACEHOLDERS = ["Fix a TODO in the codebase", "What is the tech stack of this project?", "Fix broken tests"]
 const SHELL_PLACEHOLDERS = ["ls -la", "git status", "pwd"]
+
+function DialogCodexSwapOauth(props: { title: string; instructions: string; url: string }) {
+  const dialog = useDialog()
+  const { theme } = useTheme()
+
+  return (
+    <box paddingLeft={2} paddingRight={2} gap={1} paddingBottom={1}>
+      <box flexDirection="row" justifyContent="space-between">
+        <text fg={theme.text}>
+          <b>{props.title}</b>
+        </text>
+        <text fg={theme.textMuted} onMouseUp={() => dialog.clear()}>
+          esc
+        </text>
+      </box>
+      <box gap={1}>
+        <Link href={props.url} fg={theme.primary} />
+        <text fg={theme.textMuted}>{props.instructions}</text>
+      </box>
+      <text fg={theme.textMuted}>Waiting for authorization...</text>
+    </box>
+  )
+}
 
 export function Prompt(props: PromptProps) {
   let input: TextareaRenderable
@@ -87,6 +113,332 @@ export function Prompt(props: PromptProps) {
     if (sync.data.provider.length === 0) {
       dialog.replace(() => <DialogProviderConnect />)
     }
+  }
+
+  function clearPrompt() {
+    input.extmarks.clear()
+    input.clear()
+    setStore("prompt", {
+      input: "",
+      parts: [],
+    })
+    setStore("extmarkToPartIndex", new Map())
+    props.onSubmit?.()
+  }
+
+  function usageProvider(value: string | undefined) {
+    if (!value) return "openai"
+    const normalized = value.toLowerCase()
+    if (["openai", "codex", "chatgpt", "gpt"].includes(normalized)) return "openai"
+    return ""
+  }
+
+  type AccountResponse = {
+    current: {
+      id: string | null
+      label: string | null
+      email: string | null
+      accountId: string | null
+    } | null
+    profiles: {
+      id: string
+      label: string
+      email: string | null
+      accountId: string | null
+      active: boolean
+    }[]
+    usage: {
+      limitId: string | null
+      limitName: string | null
+      primary: {
+        usedPercent: number
+        windowDurationMins: number | null
+        resetsAt: number | null
+      } | null
+      secondary: {
+        usedPercent: number
+        windowDurationMins: number | null
+        resetsAt: number | null
+      } | null
+      planType: string | null
+    } | null
+    error?: string
+  }
+
+  function toUsageEntry(input: AccountResponse): UsageEntry[] {
+    if (!input.usage) return []
+    return [
+      {
+        provider: "openai",
+        displayName: "OpenAI",
+        planType: input.usage.planType,
+        primary: input.usage.primary
+          ? {
+              usedPercent: input.usage.primary.usedPercent,
+              windowMinutes: input.usage.primary.windowDurationMins,
+              resetsAt: input.usage.primary.resetsAt,
+            }
+          : null,
+        secondary: input.usage.secondary
+          ? {
+              usedPercent: input.usage.secondary.usedPercent,
+              windowMinutes: input.usage.secondary.windowDurationMins,
+              resetsAt: input.usage.secondary.resetsAt,
+            }
+          : null,
+      },
+    ]
+  }
+
+  function showUsageDialog(data: AccountResponse) {
+    dialog.replace(() => <DialogUsage entries={toUsageEntry(data)} account={data.current} profiles={data.profiles} />)
+  }
+
+  async function fetchAccountStatus(): Promise<AccountResponse | null> {
+    return sdk.fetch(`${sdk.url}/provider/openai/account`)
+      .then((response) => {
+        if (!response.ok) return null
+        return response.json()
+      })
+      .then((data) => (data ?? null) as AccountResponse | null)
+      .catch(() => null)
+  }
+
+  function showUsage(inputText: string) {
+    const parts = inputText.trim().split(/\s+/)
+    const providerToken = parts.slice(1).find((part) => !part.startsWith("-"))
+    const providerID = usageProvider(providerToken)
+    if (providerID !== "openai") {
+      DialogAlert.show(dialog, "Usage", `Unsupported provider: ${providerToken ?? "unknown"}`)
+      return
+    }
+
+    void fetchAccountStatus().then((data) => {
+      if (!data) {
+        DialogAlert.show(dialog, "Usage", "Failed to fetch usage")
+        return
+      }
+      showUsageDialog(data)
+      if (data.error) {
+        toast.show({
+          variant: "warning",
+          message: data.error,
+          duration: 3000,
+        })
+      }
+    })
+  }
+
+  function showCodexWho() {
+    void fetchAccountStatus().then((data) => {
+      if (!data) {
+        DialogAlert.show(dialog, "Codex", "Failed to load account status")
+        return
+      }
+      showUsageDialog(data)
+      if (data.error) {
+        toast.show({
+          variant: "warning",
+          message: data.error,
+          duration: 3000,
+        })
+      }
+    })
+  }
+
+  async function runCodexSwapRequest(body: {
+    action: "next" | "use" | "add" | "status"
+    selector?: string
+    label?: string
+  }): Promise<AccountResponse | null> {
+    const response = await sdk
+      .fetch(`${sdk.url}/provider/openai/account/swap`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      .catch(() => null)
+    if (!response?.ok) return null
+    return (await response.json()) as AccountResponse
+  }
+
+  async function completeCodexAdd(label?: string) {
+    const providerMethods = sync.data.provider_auth.openai?.length
+      ? sync.data.provider_auth.openai
+      : await sdk.client.provider.auth().then((result) => result.data?.openai ?? []).catch(() => [])
+
+    const oauthMethods = providerMethods
+      .map((method, index) => ({ method, index }))
+      .filter((item) => item.method.type === "oauth")
+
+    if (oauthMethods.length === 0) {
+      DialogAlert.show(dialog, "Codex Swap", "OpenAI OAuth is not available. Use /connect first.")
+      return
+    }
+
+    const picked =
+      oauthMethods.find((item) => /chatgpt/i.test(item.method.label) && /browser/i.test(item.method.label)) ??
+      oauthMethods.find((item) => /browser/i.test(item.method.label)) ??
+      oauthMethods[0]
+
+    const auth = await sdk.client.provider.oauth.authorize({
+      providerID: "openai",
+      method: picked.index,
+    })
+    const authorization = auth.data
+    if (!authorization) {
+      DialogAlert.show(dialog, "Codex Swap", "Failed to start OpenAI OAuth")
+      return
+    }
+
+    if (authorization.method === "auto") {
+      dialog.replace(
+        () => (
+          <DialogCodexSwapOauth
+            title={picked.method.label}
+            instructions={authorization.instructions}
+            url={authorization.url}
+          />
+        ),
+      )
+      const callback = await sdk.client.provider.oauth.callback({
+        providerID: "openai",
+        method: picked.index,
+      })
+      if (callback.error) {
+        dialog.clear()
+        DialogAlert.show(dialog, "Codex Swap", "OAuth authorization failed")
+        return
+      }
+    }
+
+    if (authorization.method === "code") {
+      const code = await DialogPrompt.show(dialog, picked.method.label, {
+        placeholder: "Authorization code",
+        description: () => (
+          <box gap={1}>
+            <text fg={theme.textMuted}>{authorization.instructions}</text>
+            <Link href={authorization.url} fg={theme.primary} />
+          </box>
+        ),
+      })
+      if (!code) return
+
+      const callback = await sdk.client.provider.oauth.callback({
+        providerID: "openai",
+        method: picked.index,
+        code,
+      })
+      if (callback.error) {
+        DialogAlert.show(dialog, "Codex Swap", "OAuth authorization failed")
+        return
+      }
+    }
+
+    await sdk.client.instance.dispose().catch(() => {})
+    await sync.bootstrap()
+
+    const result = await runCodexSwapRequest({
+      action: "add",
+      ...(label ? { label } : {}),
+    })
+    if (!result) {
+      DialogAlert.show(dialog, "Codex Swap", "Failed to save account")
+      return
+    }
+
+    showUsageDialog(result)
+    if (result.error) {
+      toast.show({ variant: "warning", message: result.error, duration: 3000 })
+    } else {
+      const name = result.current?.label ?? result.current?.email ?? "account"
+      toast.show({ variant: "success", message: `Added and switched to ${name}`, duration: 2200 })
+    }
+    await sync.bootstrap()
+  }
+
+  async function saveCurrentCodexProfile(label?: string) {
+    const result = await runCodexSwapRequest({
+      action: "add",
+      ...(label ? { label } : {}),
+    })
+    if (!result) {
+      DialogAlert.show(dialog, "Codex Swap", "Failed to save current account")
+      return
+    }
+
+    showUsageDialog(result)
+    if (result.error) {
+      toast.show({ variant: "warning", message: result.error, duration: 3000 })
+    } else {
+      const name = result.current?.label ?? result.current?.email ?? "account"
+      toast.show({ variant: "success", message: `Saved current account as ${name}`, duration: 2200 })
+    }
+    await sync.bootstrap()
+  }
+
+  function showCodexSwap(inputText: string) {
+    const parts = inputText.trim().split(/\s+/)
+    const sub = (parts[1] ?? "next").toLowerCase()
+
+    if (sub === "status" || sub === "list" || sub === "who") {
+      showCodexWho()
+      return
+    }
+
+    if (sub === "save" || sub === "save-current") {
+      const label = parts.slice(2).join(" ").trim() || undefined
+      void saveCurrentCodexProfile(label)
+      return
+    }
+
+    if (sub === "add") {
+      const currentFlag = parts[2] === "--current" || parts[2] === "-c"
+      if (currentFlag) {
+        const label = parts.slice(3).join(" ").trim() || undefined
+        void saveCurrentCodexProfile(label)
+        return
+      }
+
+      const label = parts.slice(2).join(" ").trim() || undefined
+      void completeCodexAdd(label)
+      return
+    }
+
+    const body = (() => {
+      if (sub === "next") return { action: "next" as const }
+      if (sub === "use") return { action: "use" as const, selector: parts.slice(2).join(" ").trim() || undefined }
+      if (parts.length === 1) return { action: "next" as const }
+      return null
+    })()
+
+    if (!body) {
+      DialogAlert.show(
+        dialog,
+        "Codex Swap",
+        "Usage:\n/codexwho\n/codexswap\n/codexswap status\n/codexswap add <label>\n/codexswap add --current <label>\n/codexswap save <label>\n/codexswap use <label|#>",
+      )
+      return
+    }
+
+    void runCodexSwapRequest(body)
+      .then((result) => {
+        if (!result) {
+          DialogAlert.show(dialog, "Codex Swap", "Failed to switch account")
+          return
+        }
+        showUsageDialog(result)
+        if (result.error) {
+          toast.show({ variant: "warning", message: result.error, duration: 3000 })
+        } else {
+          const label = result.current?.label ?? result.current?.email ?? "account"
+          toast.show({ variant: "success", message: `Switched to ${label}`, duration: 2000 })
+        }
+        void sync.bootstrap()
+      })
+      .catch(() => {
+        DialogAlert.show(dialog, "Codex Swap", "Failed to switch account")
+      })
   }
 
   const textareaKeybindings = useTextareaKeybindings()
@@ -137,11 +489,66 @@ export function Prompt(props: PromptProps) {
     interrupt: 0,
   })
 
+  type QueuedPrompt = {
+    id: string
+    sessionID: string
+    inputText: string
+    parts: PromptInfo["parts"]
+    agent: string
+    model: { providerID: string; modelID: string }
+    variant?: string
+  }
+
+  const [queuedPrompts, setQueuedPrompts] = createSignal<QueuedPrompt[]>([])
+  const [sendingQueuedPrompt, setSendingQueuedPrompt] = createSignal(false)
+  const [queuedEditID, setQueuedEditID] = createSignal<string>()
+  const [queuedCursor, setQueuedCursor] = createSignal<number>()
+  const [queueGate, setQueueGate] = createSignal<"open" | "paused" | "wait_busy" | "wait_idle">("open")
+
+  const queuedPromptsForSession = createMemo(() => {
+    const sessionID = props.sessionID
+    if (!sessionID) return []
+    return queuedPrompts().filter((item) => item.sessionID === sessionID)
+  })
+  const queuedPromptsForSessionNewest = createMemo(() => queuedPromptsForSession().slice().reverse())
+  const editingQueuedPrompt = createMemo(() => {
+    const id = queuedEditID()
+    if (!id) return
+    return queuedPromptsForSession().find((item) => item.id === id)
+  })
+
+  function showQueue() {
+    const list = queuedPromptsForSession()
+    if (list.length === 0) {
+      DialogAlert.show(dialog, "Queue", "No end-loop messages queued.")
+      return
+    }
+
+    const gate = queueGate()
+    const paused = gate !== "open"
+    const state = paused ? "paused" : "open"
+    const note = gate === "wait_busy" || gate === "wait_idle" ? " (resumes after current manual turn)" : ""
+    const lines = list.map((item, index) => {
+      const model = `${item.model.providerID}/${item.model.modelID}`
+      const variant = item.variant ? ` · ${item.variant}` : ""
+      return `${index + 1}. ${queuedPreview(item.inputText)}\n   ${item.agent} · ${model}${variant}`
+    })
+
+    DialogAlert.show(
+      dialog,
+      "Queue",
+      [`Status: ${state}${note}`, `${list.length} end-loop message${list.length === 1 ? "" : "s"}`, "", ...lines].join(
+        "\n",
+      ),
+    )
+  }
+
   createEffect(
     on(
       () => props.sessionID,
       () => {
         setStore("placeholder", Math.floor(Math.random() * PLACEHOLDERS.length))
+        setQueueGate("open")
       },
       { defer: true },
     ),
@@ -237,6 +644,7 @@ export function Prompt(props: PromptProps) {
             sdk.client.session.abort({
               sessionID: props.sessionID,
             })
+            setQueueGate("paused")
             setStore("interrupt", 0)
           }
           dialog.clear()
@@ -349,6 +757,54 @@ export function Prompt(props: PromptProps) {
               }}
             />
           ))
+        },
+      },
+      {
+        title: "Usage",
+        value: "prompt.usage",
+        category: "Prompt",
+        slash: {
+          name: "usage",
+        },
+        onSelect: (dialog) => {
+          showUsage("/usage")
+          dialog.clear()
+        },
+      },
+      {
+        title: "Queue",
+        value: "prompt.queue",
+        category: "Prompt",
+        slash: {
+          name: "queue",
+        },
+        onSelect: (dialog) => {
+          showQueue()
+          dialog.clear()
+        },
+      },
+      {
+        title: "Codex Who",
+        value: "prompt.codexwho",
+        category: "Prompt",
+        slash: {
+          name: "codexwho",
+        },
+        onSelect: (dialog) => {
+          showCodexWho()
+          dialog.clear()
+        },
+      },
+      {
+        title: "Codex Swap",
+        value: "prompt.codexswap",
+        category: "Prompt",
+        slash: {
+          name: "codexswap",
+        },
+        onSelect: (dialog) => {
+          showCodexSwap("/codexswap")
+          dialog.clear()
         },
       },
     ]
@@ -525,30 +981,8 @@ export function Prompt(props: PromptProps) {
     },
   ])
 
-  async function submit() {
-    if (props.disabled) return
-    if (autocomplete?.visible) return
-    if (!store.prompt.input) return
-    const trimmed = store.prompt.input.trim()
-    if (trimmed === "exit" || trimmed === "quit" || trimmed === ":q") {
-      exit()
-      return
-    }
-    const selectedModel = local.model.current()
-    if (!selectedModel) {
-      promptModelWarning()
-      return
-    }
-    const sessionID = props.sessionID
-      ? props.sessionID
-      : await (async () => {
-          const sessionID = await sdk.client.session.create({}).then((x) => x.data!.id)
-          return sessionID
-        })()
-    const messageID = Identifier.ascending("message")
+  function resolvePromptInput() {
     let inputText = store.prompt.input
-
-    // Expand pasted text inline before submitting
     const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
     const sortedExtmarks = allExtmarks.sort((a: { start: number }, b: { start: number }) => b.start - a.start)
 
@@ -564,8 +998,268 @@ export function Prompt(props: PromptProps) {
       }
     }
 
-    // Filter out text parts (pasted content) since they're now expanded inline
-    const nonTextParts = store.prompt.parts.filter((part) => part.type !== "text")
+    return {
+      inputText,
+      nonTextParts: store.prompt.parts.filter((part) => part.type !== "text"),
+    }
+  }
+
+  function sendPrompt(input: {
+    sessionID: string
+    model: { providerID: string; modelID: string }
+    variant?: string
+    agent: string
+    inputText: string
+    parts: PromptInfo["parts"]
+    messageID?: string
+  }) {
+    return sdk.client.session.prompt({
+      sessionID: input.sessionID,
+      ...input.model,
+      messageID: input.messageID ?? Identifier.ascending("message"),
+      agent: input.agent,
+      model: input.model,
+      variant: input.variant,
+      parts: [
+        {
+          id: Identifier.ascending("part"),
+          type: "text",
+          text: input.inputText,
+        },
+        ...input.parts.map((x) => ({
+          id: Identifier.ascending("part"),
+          ...x,
+        })),
+      ],
+    })
+  }
+
+  function editQueued(direction: -1 | 1) {
+    if (props.disabled) return
+    if (!props.sessionID) return
+    if (store.mode !== "normal") return
+
+    const list = queuedPromptsForSessionNewest()
+    if (list.length === 0) return
+
+    const current = queuedCursor()
+    const next = (() => {
+      if (current === undefined) return direction === -1 ? 0 : list.length - 1
+      const index = current + direction
+      if (index < 0) return list.length - 1
+      if (index >= list.length) return 0
+      return index
+    })()
+
+    const target = list[next]
+    if (!target) return
+
+    setQueuedCursor(next)
+    setQueuedEditID(target.id)
+    input.setText(target.inputText)
+    setStore("prompt", {
+      input: target.inputText,
+      parts: target.parts,
+    })
+    restoreExtmarksFromParts(target.parts)
+    input.gotoBufferEnd()
+  }
+
+  function queueAtEndOfLoop() {
+    if (props.disabled) return
+    if (autocomplete?.visible) return
+    if (!props.sessionID || status().type === "idle" || store.mode !== "normal") {
+      void submit()
+      return
+    }
+
+    const trimmed = store.prompt.input.trim()
+    if (!trimmed || trimmed.startsWith("/")) {
+      void submit()
+      return
+    }
+
+    const selectedModel = local.model.current()
+    if (!selectedModel) {
+      promptModelWarning()
+      return
+    }
+
+    const payload = resolvePromptInput()
+    const queued = queuedPromptsForSession().length + 1
+    setQueuedPrompts((list) => [
+      ...list,
+      {
+        id: Identifier.ascending("part"),
+        sessionID: props.sessionID!,
+        inputText: payload.inputText,
+        parts: payload.nonTextParts,
+        agent: local.agent.current().name,
+        model: {
+          providerID: selectedModel.providerID,
+          modelID: selectedModel.modelID,
+        },
+        variant: local.model.variant.current(),
+      },
+    ])
+
+    setQueuedCursor(undefined)
+    setQueuedEditID(undefined)
+    history.append({
+      ...store.prompt,
+      mode: store.mode,
+    })
+    clearPrompt()
+    toast.show({
+      variant: "info",
+      message: `Queued for end of loop (${queued})`,
+      duration: 2000,
+    })
+  }
+
+  createEffect(() => {
+    const current = queuedEditID()
+    if (!current) return
+    if (queuedPromptsForSession().some((item) => item.id === current)) return
+    setQueuedEditID(undefined)
+    setQueuedCursor(undefined)
+  })
+
+  createEffect(() => {
+    const gate = queueGate()
+    if (gate === "open" || gate === "paused") return
+    const current = status().type
+    if (gate === "wait_busy") {
+      if (current === "idle") return
+      setQueueGate("wait_idle")
+      return
+    }
+    if (current !== "idle") return
+    setQueueGate("open")
+  })
+
+  createEffect(() => {
+    if (queueGate() !== "open") return
+    if (sendingQueuedPrompt()) return
+    if (queuedEditID()) return
+    if (status().type !== "idle") return
+    const next = queuedPromptsForSession()[0]
+    if (!next) return
+
+    setSendingQueuedPrompt(true)
+    setQueuedPrompts((list) => {
+      const index = list.findIndex((item) => item.id === next.id)
+      if (index < 0) return list
+      return [...list.slice(0, index), ...list.slice(index + 1)]
+    })
+    sendPrompt({
+      sessionID: next.sessionID,
+      model: next.model,
+      variant: next.variant,
+      agent: next.agent,
+      inputText: next.inputText,
+      parts: next.parts,
+    })
+      .catch(() => {
+        toast.show({
+          variant: "error",
+          message: "Failed to send queued prompt",
+          duration: 3000,
+        })
+      })
+      .finally(() => {
+        setSendingQueuedPrompt(false)
+      })
+  })
+
+  function queuedPreview(inputText: string) {
+    const oneLine = inputText.replace(/\s+/g, " ").trim()
+    if (oneLine.length <= 80) return oneLine
+    return oneLine.slice(0, 77) + "..."
+  }
+
+  async function submit() {
+    if (props.disabled) return
+    const trimmed = store.prompt.input.trim()
+    if (
+      autocomplete?.visible &&
+      !trimmed.startsWith("/usage") &&
+      !trimmed.startsWith("/queue") &&
+      !trimmed.startsWith("/codexwho") &&
+      !trimmed.startsWith("/codexswap")
+    )
+      return
+    if (!store.prompt.input) return
+    if (trimmed === "exit" || trimmed === "quit" || trimmed === ":q") {
+      exit()
+      return
+    }
+    if (trimmed.startsWith("/usage")) {
+      showUsage(trimmed)
+      clearPrompt()
+      return
+    }
+    if (trimmed.startsWith("/queue")) {
+      showQueue()
+      clearPrompt()
+      return
+    }
+    if (trimmed.startsWith("/codexwho")) {
+      showCodexWho()
+      clearPrompt()
+      return
+    }
+    if (trimmed.startsWith("/codexswap")) {
+      showCodexSwap(trimmed)
+      clearPrompt()
+      return
+    }
+
+    const payload = resolvePromptInput()
+    const inputText = payload.inputText
+    const nonTextParts = payload.nonTextParts
+
+    const queuedEditing = editingQueuedPrompt()
+    if (queuedEditing) {
+      setQueuedPrompts((list) =>
+        list.map((item) =>
+          item.id === queuedEditing.id
+            ? {
+                ...item,
+                inputText,
+                parts: nonTextParts,
+              }
+            : item,
+        ),
+      )
+      history.append({
+        ...store.prompt,
+        mode: store.mode,
+      })
+      setQueuedCursor(undefined)
+      setQueuedEditID(undefined)
+      clearPrompt()
+      toast.show({
+        variant: "success",
+        message: "Queued message updated",
+        duration: 1500,
+      })
+      return
+    }
+
+    const selectedModel = local.model.current()
+    if (!selectedModel) {
+      promptModelWarning()
+      return
+    }
+    const sessionID = props.sessionID
+      ? props.sessionID
+      : await (async () => {
+          const sessionID = await sdk.client.session.create({}).then((x) => x.data!.id)
+          return sessionID
+        })()
+    const messageID = Identifier.ascending("message")
+    if (queueGate() === "paused") setQueueGate("wait_busy")
 
     // Capture mode before it gets reset
     const currentMode = store.mode
@@ -613,27 +1307,15 @@ export function Prompt(props: PromptProps) {
           })),
       })
     } else {
-      sdk.client.session
-        .prompt({
-          sessionID,
-          ...selectedModel,
-          messageID,
-          agent: local.agent.current().name,
-          model: selectedModel,
-          variant,
-          parts: [
-            {
-              id: Identifier.ascending("part"),
-              type: "text",
-              text: inputText,
-            },
-            ...nonTextParts.map((x) => ({
-              id: Identifier.ascending("part"),
-              ...x,
-            })),
-          ],
-        })
-        .catch(() => {})
+      sendPrompt({
+        sessionID,
+        model: selectedModel,
+        messageID,
+        agent: local.agent.current().name,
+        variant,
+        inputText,
+        parts: nonTextParts,
+      }).catch(() => {})
     }
     history.append({
       ...store.prompt,
@@ -836,6 +1518,25 @@ export function Prompt(props: PromptProps) {
                   e.preventDefault()
                   return
                 }
+
+                if (e.name === "return" && e.meta) {
+                  e.preventDefault()
+                  queueAtEndOfLoop()
+                  return
+                }
+
+                if (e.name === "up" && e.meta) {
+                  e.preventDefault()
+                  editQueued(-1)
+                  return
+                }
+
+                if (e.name === "down" && e.meta) {
+                  e.preventDefault()
+                  editQueued(1)
+                  return
+                }
+
                 // Handle clipboard paste (Ctrl+V) - check for images first on Windows
                 // This is needed because Windows terminal doesn't properly send image data
                 // through bracketed paste, so we need to intercept the keypress and
@@ -1043,6 +1744,26 @@ export function Prompt(props: PromptProps) {
             }
           />
         </box>
+        <Show when={queuedPromptsForSession().length > 0}>
+          <box paddingLeft={1} paddingBottom={1} gap={0}>
+            <For each={queuedPromptsForSession().slice(0, 2)}>
+              {(item, index) => {
+                const editing = createMemo(() => queuedEditID() === item.id)
+                return (
+                  <text fg={editing() ? theme.text : theme.textMuted}>
+                    <span style={{ fg: editing() ? theme.text : theme.textMuted }}>
+                      {editing() ? "● editing end-loop" : "○ queued end-loop"} {index() + 1}
+                    </span>
+                    <span style={{ fg: theme.textMuted }}> · {queuedPreview(item.inputText)}</span>
+                  </text>
+                )
+              }}
+            </For>
+            <Show when={queuedPromptsForSession().length > 2}>
+              <text fg={theme.textMuted}>+{queuedPromptsForSession().length - 2} more queued</text>
+            </Show>
+          </box>
+        </Show>
         <box flexDirection="row" justifyContent="space-between">
           <Show when={status().type !== "idle"} fallback={<text />}>
             <box

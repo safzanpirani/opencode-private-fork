@@ -1,4 +1,5 @@
 import { useSync } from "@tui/context/sync"
+import { useLocal } from "@tui/context/local"
 import { createMemo, For, Show, Switch, Match } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTheme } from "../../context/theme"
@@ -12,8 +13,58 @@ import { useDirectory } from "../../context/directory"
 import { useKV } from "../../context/kv"
 import { TodoItem } from "../../component/todo-item"
 
+function formatDuration(totalMinutes: number): string {
+  if (totalMinutes < 60) return `${Math.max(0, Math.round(totalMinutes))}m`
+  if (totalMinutes < 24 * 60) return `${(totalMinutes / 60).toFixed(1)}h`
+  return `${(totalMinutes / (24 * 60)).toFixed(1)}d`
+}
+
+function formatRemaining(resetsAt: number | null | undefined): string {
+  if (!resetsAt) return "--"
+  const remaining = (resetsAt * 1000 - Date.now()) / 60000
+  return formatDuration(Math.max(0, remaining))
+}
+
+function formatWindow(windowDurationMins: number | null | undefined, fallbackMins: number): string {
+  return formatDuration(windowDurationMins ?? fallbackMins)
+}
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, value))
+}
+
+function renderBar(usedPercent: number, pacePercent: number, width = 18) {
+  const span = Math.max(6, width)
+  const used = Math.round((clampPercent(usedPercent) / 100) * span)
+  const marker = Math.max(0, Math.min(span - 1, Math.round((clampPercent(pacePercent) / 100) * (span - 1))))
+  const chars = Array.from({ length: span }, (_, i) => (i < used ? "━" : "─"))
+  return {
+    before: chars.slice(0, marker).join(""),
+    marker: "│",
+    after: chars.slice(marker + 1).join(""),
+  }
+}
+
+function usageView(
+  window: { usedPercent: number; resetsAt: number | null | undefined; windowDurationMins: number | null | undefined },
+  fallbackMins: number,
+) {
+  const mins = Math.max(1, window.windowDurationMins ?? fallbackMins)
+  const remaining = window.resetsAt ? Math.max(0, (window.resetsAt * 1000 - Date.now()) / 60000) : null
+  const elapsed = remaining === null ? null : Math.max(0, Math.min(mins, mins - remaining))
+  const used = clampPercent(window.usedPercent)
+  const pace = elapsed === null ? 0 : clampPercent((elapsed / mins) * 100)
+  return {
+    bar: renderBar(used, pace),
+    usedLabel: `${Math.round(used)}%`,
+    overPace: elapsed !== null && used > pace,
+    resetLabel: `(${formatRemaining(window.resetsAt)}/${formatWindow(window.windowDurationMins, fallbackMins)})`,
+  }
+}
+
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const sync = useSync()
+  const local = useLocal()
   const { theme } = useTheme()
   const session = createMemo(() => sync.session.get(props.sessionID)!)
   const diff = createMemo(() => sync.data.session_diff[props.sessionID] ?? [])
@@ -60,6 +111,15 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     }
   })
 
+  const codexModel = createMemo(() => {
+    const model = local.model.current()
+    if (!model) return false
+    return model.providerID === "openai"
+  })
+  const codexLimit = createMemo(() => sync.data.provider_rate_limit["openai"])
+  const codexPrimary = createMemo(() => codexLimit()?.primary ?? null)
+  const codexSecondary = createMemo(() => codexLimit()?.secondary ?? null)
+
   const directory = useDirectory()
   const kv = useKV()
 
@@ -105,6 +165,52 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
               <text fg={theme.textMuted}>{context()?.tokens ?? 0} tokens</text>
               <text fg={theme.textMuted}>{context()?.percentage ?? 0}% used</text>
               <text fg={theme.textMuted}>{cost()} spent</text>
+
+              <Show when={codexModel() && (codexPrimary() || codexSecondary())}>
+                <box marginTop={1} gap={0}>
+                  <text fg={theme.accent}>
+                    <b>Codex</b>
+                  </text>
+                  <Show when={codexPrimary()}>
+                    {(window) => {
+                      const view = usageView(window(), 300)
+                      const barColor = view.overPace ? theme.error : theme.warning
+                      return (
+                        <box flexDirection="row" justifyContent="space-between" gap={1}>
+                          <text wrapMode="none">
+                            <span style={{ fg: barColor }}>{view.bar.before}</span>
+                            <span style={{ fg: view.overPace ? theme.error : theme.text }}>{view.bar.marker}</span>
+                            <span style={{ fg: barColor }}>{view.bar.after}</span>
+                            <span style={{ fg: barColor }}> {view.usedLabel}</span>
+                          </text>
+                          <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+                            {view.resetLabel}
+                          </text>
+                        </box>
+                      )
+                    }}
+                  </Show>
+                  <Show when={codexSecondary()}>
+                    {(window) => {
+                      const view = usageView(window(), 10_080)
+                      const barColor = view.overPace ? theme.error : theme.warning
+                      return (
+                        <box flexDirection="row" justifyContent="space-between" gap={1}>
+                          <text wrapMode="none">
+                            <span style={{ fg: barColor }}>{view.bar.before}</span>
+                            <span style={{ fg: view.overPace ? theme.error : theme.text }}>{view.bar.marker}</span>
+                            <span style={{ fg: barColor }}>{view.bar.after}</span>
+                            <span style={{ fg: barColor }}> {view.usedLabel}</span>
+                          </text>
+                          <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+                            {view.resetLabel}
+                          </text>
+                        </box>
+                      )
+                    }}
+                  </Show>
+                </box>
+              </Show>
             </box>
             <Show when={mcpEntries().length > 0}>
               <box>

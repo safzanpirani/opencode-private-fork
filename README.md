@@ -34,8 +34,241 @@
   <a href="README.th.md">ไทย</a> |
   <a href="README.tr.md">Türkçe</a> |
   <a href="README.uk.md">Українська</a> |
-  <a href="README.bn.md">বাংলা</a>
+  <a href="README.bn.md">বাংলা</a> |
+  <a href="README.gr.md">Ελληνικά</a>
 </p>
+
+> [!IMPORTANT]
+> This repository includes a custom fork setup focused on Codex usage UX + queue behavior improvements.
+> If you're sharing this with a friend, use the quick setup prompt below to make it feel native (single command launch via alias/wrapper).
+
+## Quick fork setup (agent-friendly)
+
+Give the following prompt to any coding agent (or run manually) to set everything up in one shot:
+
+```text
+Set up this OpenCode fork so it runs like a native command named `ocx`.
+
+Requirements:
+1) Clone this fork to ~/Development/opencode-fork (or keep existing clone if present).
+2) Install dependencies with bun.
+3) Create executable launcher at ~/.local/bin/ocx that starts OpenCode in the directory where `ocx` is run (unless a path is explicitly passed), while executing from this repo:
+   bun run --cwd "<ABSOLUTE_PATH_TO_REPO>/packages/opencode" --conditions=browser src/index.ts "$PWD" "$@"
+4) Ensure ~/.local/bin is in PATH (append to shell rc if missing).
+5) chmod +x ~/.local/bin/ocx
+6) Verify with:
+   - command -v ocx
+   - ocx --help
+7) Print a short success summary and exactly what was changed.
+
+Do not use shell aliases unless explicitly asked. Use an executable wrapper script.
+```
+
+### Manual setup (if you prefer)
+
+```bash
+# 1) Clone
+git clone <YOUR_FORK_URL> ~/Development/opencode-fork
+
+# 2) Install deps
+cd ~/Development/opencode-fork
+bun install
+
+# 3) Create native launcher command
+mkdir -p ~/.local/bin
+cat > ~/.local/bin/ocx <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="$HOME/Development/opencode-fork"
+
+# Default to the directory you run ocx from.
+# If the first argument is a positional path/subcommand, keep args unchanged.
+if [[ $# -eq 0 || "${1:0:1}" == "-" ]]; then
+  exec bun run --cwd "$REPO/packages/opencode" --conditions=browser src/index.ts "$PWD" "$@"
+fi
+
+exec bun run --cwd "$REPO/packages/opencode" --conditions=browser src/index.ts "$@"
+EOF
+chmod +x ~/.local/bin/ocx
+
+# 4) Ensure PATH includes ~/.local/bin
+# (example for zsh)
+grep -q 'export PATH="$HOME/.local/bin:$PATH"' ~/.zshrc || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+
+# 5) Reload shell and verify
+source ~/.zshrc
+command -v ocx
+ocx --help
+```
+
+### Windows setup (PowerShell)
+
+```powershell
+# 1) Clone
+ git clone <YOUR_FORK_URL> $HOME\Development\opencode-fork
+
+# 2) Install deps
+ Set-Location $HOME\Development\opencode-fork
+ bun install
+
+# 3) Create native launcher command (ocx.cmd)
+ New-Item -ItemType Directory -Force $HOME\bin | Out-Null
+ @'
+@echo off
+setlocal
+set "REPO=%USERPROFILE%\Development\opencode-fork"
+
+REM Default to the directory you run ocx from when first arg is missing or an option.
+if "%~1"=="" (
+  bun run --cwd "%REPO%\packages\opencode" --conditions=browser src/index.ts "%CD%"
+  exit /b %errorlevel%
+)
+if "%~1"=="-" (
+  bun run --cwd "%REPO%\packages\opencode" --conditions=browser src/index.ts "%CD%" %*
+  exit /b %errorlevel%
+)
+if "%~1"=="--help" (
+  bun run --cwd "%REPO%\packages\opencode" --conditions=browser src/index.ts "%CD%" %*
+  exit /b %errorlevel%
+)
+
+bun run --cwd "%REPO%\packages\opencode" --conditions=browser src/index.ts %*
+'@ | Set-Content -Encoding ascii $HOME\bin\ocx.cmd
+
+# 4) Ensure %USERPROFILE%\bin is in PATH (current session + future sessions)
+if (-not ($env:Path -split ';' | Where-Object { $_ -eq "$HOME\bin" })) {
+  $env:Path = "$HOME\bin;" + $env:Path
+}
+$machinePath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (($machinePath -split ';') -notcontains "$HOME\bin") {
+  [Environment]::SetEnvironmentVariable("Path", "$HOME\bin;$machinePath", "User")
+}
+
+# 5) Verify
+Get-Command ocx
+ocx --help
+```
+
+> [!NOTE]
+> If `bun` is not found in `ocx.cmd`, reinstall Bun and restart your terminal so `%USERPROFILE%\.bun\bin` is on PATH.
+
+### Windows shell aliases for `ocx`
+
+If you prefer aliases instead of a wrapper script, use one of the following.
+
+#### PowerShell alias (persistent)
+
+```powershell
+# Create profile if missing
+if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null }
+
+# Add function + alias
+@'
+function Invoke-Ocx {
+  $repo = "$HOME\Development\opencode-fork"
+  if ($args.Count -eq 0 -or $args[0].StartsWith("-")) {
+    bun run --cwd "$repo\packages\opencode" --conditions=browser src/index.ts "$PWD" @args
+    return
+  }
+  bun run --cwd "$repo\packages\opencode" --conditions=browser src/index.ts @args
+}
+Set-Alias ocx Invoke-Ocx
+'@ | Add-Content $PROFILE
+
+# Reload profile
+. $PROFILE
+ocx --help
+```
+
+#### CMD alias (doskey macro)
+
+```bat
+:: Create macro file
+mkdir "%USERPROFILE%\bin" 2>nul
+(
+  echo doskey ocx=bun run --cwd "%USERPROFILE%\Development\opencode-fork\packages\opencode" --conditions=browser src/index.ts $*
+) > "%USERPROFILE%\bin\ocx-macros.cmd"
+
+:: Load now (current CMD window)
+doskey /macrofile="%USERPROFILE%\bin\ocx-macros.cmd"
+ocx --help
+
+:: Persist for future CMD windows
+reg add "HKCU\Software\Microsoft\Command Processor" /v AutoRun /t REG_SZ /d "doskey /macrofile=\"%USERPROFILE%\bin\ocx-macros.cmd\"" /f
+```
+
+> [!TIP]
+> `doskey` macros only work inside `cmd.exe` sessions (not PowerShell).
+
+## Fork-specific features (Codex usage + queue UX)
+
+> [!NOTE]
+> This section documents **fork-only behavior** added in this repository. Upstream `anomalyco/opencode` may not include these changes.
+
+### 1) Always-visible Codex usage meters
+
+This fork surfaces Codex usage in three places:
+
+- **Session strip above the prompt** (always visible during chat)
+- **Session sidebar → Context → Codex**
+- **`/usage` dialog**
+
+What the values mean:
+
+- `(<remaining>/<window>)` format, for example `(1.2h/5.0h)` and `(5.3d/7.0d)`
+- `│` inside the bar = expected pace marker for current time in window
+- Percent (`23%`) = actual consumed usage
+- Colors:
+  - warning color = within expected pace
+  - error color = usage is ahead of expected pace (higher risk of hitting limit)
+
+### 2) `/usage` command
+
+Show current provider usage snapshot in a dialog:
+
+```bash
+/usage
+/usage openai
+/usage codex
+/usage --refresh
+```
+
+Notes:
+
+- Default provider is OpenAI/Codex.
+- `--refresh` forces a fresh fetch instead of relying on cached state.
+
+### 3) Message queue behavior (fork custom)
+
+This fork supports two queue modes:
+
+- **Enter** → queue/send immediately (default OpenCode behavior)
+- **Option/Alt + Enter** → queue for **end of current agent loop** (tail queue)
+
+Tail-queue editing hotkeys:
+
+- **Option/Alt + Up** → load queued tail message into input (newest first)
+- **Option/Alt + Down** → move in reverse
+- **Enter while editing a queued tail message** → updates that queued item **in place** (keeps original execution order)
+
+A pinned muted preview is shown near the prompt when tail-queued messages exist.
+
+### 4) Quick example
+
+If queued order is:
+
+1. `message 1`
+2. `message 2`
+3. `message 3`
+
+Edit `message 2` via Option/Alt+Up/Down and press Enter after editing to `message 2xyz`.
+
+Final queue order remains:
+
+1. `message 1`
+2. `message 2xyz`
+3. `message 3`
 
 [![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
 
