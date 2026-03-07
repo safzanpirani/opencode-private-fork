@@ -25,14 +25,19 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       headers: props.headers,
     })
 
-    const request: typeof fetch = (input, init) => {
-      const headers = new Headers(props.headers)
-      if (init?.headers) new Headers(init.headers).forEach((v, k) => headers.set(k, v))
-      return (props.fetch ?? fetch)(input, {
-        ...init,
-        headers,
-      })
-    }
+    const request = Object.assign(
+      (input: URL | RequestInfo, init?: BunFetchRequestInit | RequestInit) => {
+        const headers = new Headers(props.headers)
+        if (init?.headers) new Headers(init.headers).forEach((v, k) => headers.set(k, v))
+        return (props.fetch ?? fetch)(input, {
+          ...init,
+          headers,
+        })
+      },
+      {
+        preconnect: fetch.preconnect,
+      },
+    ) satisfies typeof fetch
 
     const emitter = createGlobalEmitter<{
       [key in Event["type"]]: Extract<Event, { type: key }>
