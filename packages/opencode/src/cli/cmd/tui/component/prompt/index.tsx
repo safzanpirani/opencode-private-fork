@@ -557,10 +557,6 @@ export function Prompt(props: PromptProps) {
     }
   }
 
-  function queueMod(e: { meta?: boolean; alt?: boolean }) {
-    return e.meta || e.alt
-  }
-
   function stopQueuedEdit(restore?: boolean) {
     const draft = queuedDraft()
     setQueuedEditID(undefined)
@@ -1627,25 +1623,25 @@ export function Prompt(props: PromptProps) {
                   return
                 }
 
-                if (e.name === "return" && queueMod(e)) {
+                if (e.name === "return" && e.meta) {
                   e.preventDefault()
                   queueAtEndOfLoop()
                   return
                 }
 
-                if (e.name === "up" && queueMod(e)) {
+                if (e.name === "up" && e.meta) {
                   e.preventDefault()
                   editQueued(-1)
                   return
                 }
 
-                if (e.name === "down" && queueMod(e)) {
+                if (e.name === "down" && e.meta) {
                   e.preventDefault()
                   editQueued(1)
                   return
                 }
 
-                if (e.name === "backspace" && queueMod(e) && editingQueuedPrompt()) {
+                if (e.name === "backspace" && e.meta && editingQueuedPrompt()) {
                   e.preventDefault()
                   removeQueuedItem(editingQueuedPrompt()!.id)
                   return
