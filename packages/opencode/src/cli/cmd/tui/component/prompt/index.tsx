@@ -1,5 +1,17 @@
 import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, t, dim, fg } from "@opentui/core"
-import { createEffect, createMemo, type JSX, onMount, createSignal, onCleanup, on, Show, Switch, Match, For } from "solid-js"
+import {
+  createEffect,
+  createMemo,
+  type JSX,
+  onMount,
+  createSignal,
+  onCleanup,
+  on,
+  Show,
+  Switch,
+  Match,
+  For,
+} from "solid-js"
 import "opentui-spinner/solid"
 import path from "path"
 import { Filesystem } from "@/util/filesystem"
@@ -37,6 +49,7 @@ import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
 import { DialogUsage, type UsageEntry } from "../dialog-usage"
+import { mergeQueuedPrompt } from "./queue"
 
 export type PromptProps = {
   sessionID?: string
@@ -118,6 +131,7 @@ export function Prompt(props: PromptProps) {
   function clearPrompt() {
     input.extmarks.clear()
     input.clear()
+    setQueuedDraft(undefined)
     setStore("prompt", {
       input: "",
       parts: [],
@@ -195,7 +209,8 @@ export function Prompt(props: PromptProps) {
   }
 
   async function fetchAccountStatus(): Promise<AccountResponse | null> {
-    return sdk.fetch(`${sdk.url}/provider/openai/account`)
+    return sdk
+      .fetch(`${sdk.url}/provider/openai/account`)
       .then((response) => {
         if (!response.ok) return null
         return response.json()
@@ -265,7 +280,10 @@ export function Prompt(props: PromptProps) {
   async function completeCodexAdd(label?: string) {
     const providerMethods = sync.data.provider_auth.openai?.length
       ? sync.data.provider_auth.openai
-      : await sdk.client.provider.auth().then((result) => result.data?.openai ?? []).catch(() => [])
+      : await sdk.client.provider
+          .auth()
+          .then((result) => result.data?.openai ?? [])
+          .catch(() => [])
 
     const oauthMethods = providerMethods
       .map((method, index) => ({ method, index }))
@@ -292,15 +310,13 @@ export function Prompt(props: PromptProps) {
     }
 
     if (authorization.method === "auto") {
-      dialog.replace(
-        () => (
-          <DialogCodexSwapOauth
-            title={picked.method.label}
-            instructions={authorization.instructions}
-            url={authorization.url}
-          />
-        ),
-      )
+      dialog.replace(() => (
+        <DialogCodexSwapOauth
+          title={picked.method.label}
+          instructions={authorization.instructions}
+          url={authorization.url}
+        />
+      ))
       const callback = await sdk.client.provider.oauth.callback({
         providerID: "openai",
         method: picked.index,
@@ -499,10 +515,16 @@ export function Prompt(props: PromptProps) {
     variant?: string
   }
 
+  type QueuedDraft = {
+    inputText: string
+    nonTextParts: PromptInfo["parts"]
+  }
+
   const [queuedPrompts, setQueuedPrompts] = createSignal<QueuedPrompt[]>([])
   const [sendingQueuedPrompt, setSendingQueuedPrompt] = createSignal(false)
   const [queuedEditID, setQueuedEditID] = createSignal<string>()
   const [queuedCursor, setQueuedCursor] = createSignal<number>()
+  const [queuedDraft, setQueuedDraft] = createSignal<QueuedDraft>()
   const [queueGate, setQueueGate] = createSignal<"open" | "paused" | "wait_busy" | "wait_idle">("open")
 
   const queuedPromptsForSession = createMemo(() => {
@@ -1054,14 +1076,18 @@ export function Prompt(props: PromptProps) {
     const target = list[next]
     if (!target) return
 
+    const payload = queuedDraft() ?? resolvePromptInput()
+    if (!queuedDraft()) setQueuedDraft(payload)
+    const merged = mergeQueuedPrompt(target, payload)
+
     setQueuedCursor(next)
     setQueuedEditID(target.id)
-    input.setText(target.inputText)
+    input.setText(merged.inputText)
     setStore("prompt", {
-      input: target.inputText,
-      parts: target.parts,
+      input: merged.inputText,
+      parts: merged.parts,
     })
-    restoreExtmarksFromParts(target.parts)
+    restoreExtmarksFromParts(merged.parts)
     input.gotoBufferEnd()
   }
 
@@ -1105,6 +1131,7 @@ export function Prompt(props: PromptProps) {
 
     setQueuedCursor(undefined)
     setQueuedEditID(undefined)
+    setQueuedDraft(undefined)
     history.append({
       ...store.prompt,
       mode: store.mode,
@@ -1123,6 +1150,7 @@ export function Prompt(props: PromptProps) {
     if (queuedPromptsForSession().some((item) => item.id === current)) return
     setQueuedEditID(undefined)
     setQueuedCursor(undefined)
+    setQueuedDraft(undefined)
   })
 
   createEffect(() => {
