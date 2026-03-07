@@ -1,5 +1,17 @@
 import { BoxRenderable, TextareaRenderable, MouseEvent, PasteEvent, t, dim, fg } from "@opentui/core"
-import { createEffect, createMemo, type JSX, onMount, createSignal, onCleanup, on, Show, Switch, Match, For } from "solid-js"
+import {
+  createEffect,
+  createMemo,
+  type JSX,
+  onMount,
+  createSignal,
+  onCleanup,
+  on,
+  Show,
+  Switch,
+  Match,
+  For,
+} from "solid-js"
 import "opentui-spinner/solid"
 import path from "path"
 import { Filesystem } from "@/util/filesystem"
@@ -37,6 +49,8 @@ import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
 import { DialogUsage, type UsageEntry } from "../dialog-usage"
+import { DialogQueue } from "../dialog-queue"
+import { mergeQueuedPrompt, removeQueued } from "./queue"
 
 export type PromptProps = {
   sessionID?: string
@@ -118,6 +132,9 @@ export function Prompt(props: PromptProps) {
   function clearPrompt() {
     input.extmarks.clear()
     input.clear()
+    setQueuedEditID(undefined)
+    setQueuedCursor(undefined)
+    setQueuedDraft(undefined)
     setStore("prompt", {
       input: "",
       parts: [],
@@ -195,7 +212,8 @@ export function Prompt(props: PromptProps) {
   }
 
   async function fetchAccountStatus(): Promise<AccountResponse | null> {
-    return sdk.fetch(`${sdk.url}/provider/openai/account`)
+    return sdk
+      .fetch(`${sdk.url}/provider/openai/account`)
       .then((response) => {
         if (!response.ok) return null
         return response.json()
@@ -265,7 +283,10 @@ export function Prompt(props: PromptProps) {
   async function completeCodexAdd(label?: string) {
     const providerMethods = sync.data.provider_auth.openai?.length
       ? sync.data.provider_auth.openai
-      : await sdk.client.provider.auth().then((result) => result.data?.openai ?? []).catch(() => [])
+      : await sdk.client.provider
+          .auth()
+          .then((result) => result.data?.openai ?? [])
+          .catch(() => [])
 
     const oauthMethods = providerMethods
       .map((method, index) => ({ method, index }))
@@ -292,15 +313,13 @@ export function Prompt(props: PromptProps) {
     }
 
     if (authorization.method === "auto") {
-      dialog.replace(
-        () => (
-          <DialogCodexSwapOauth
-            title={picked.method.label}
-            instructions={authorization.instructions}
-            url={authorization.url}
-          />
-        ),
-      )
+      dialog.replace(() => (
+        <DialogCodexSwapOauth
+          title={picked.method.label}
+          instructions={authorization.instructions}
+          url={authorization.url}
+        />
+      ))
       const callback = await sdk.client.provider.oauth.callback({
         providerID: "openai",
         method: picked.index,
@@ -499,10 +518,17 @@ export function Prompt(props: PromptProps) {
     variant?: string
   }
 
+  type QueuedDraft = {
+    prompt: PromptInfo
+    inputText: string
+    nonTextParts: PromptInfo["parts"]
+  }
+
   const [queuedPrompts, setQueuedPrompts] = createSignal<QueuedPrompt[]>([])
   const [sendingQueuedPrompt, setSendingQueuedPrompt] = createSignal(false)
   const [queuedEditID, setQueuedEditID] = createSignal<string>()
   const [queuedCursor, setQueuedCursor] = createSignal<number>()
+  const [queuedDraft, setQueuedDraft] = createSignal<QueuedDraft>()
   const [queueGate, setQueueGate] = createSignal<"open" | "paused" | "wait_busy" | "wait_idle">("open")
 
   const queuedPromptsForSession = createMemo(() => {
@@ -517,6 +543,71 @@ export function Prompt(props: PromptProps) {
     return queuedPromptsForSession().find((item) => item.id === id)
   })
 
+  function setPrompt(prompt: PromptInfo) {
+    input.setText(prompt.input)
+    setStore("prompt", prompt)
+    restoreExtmarksFromParts(prompt.parts)
+    input.gotoBufferEnd()
+  }
+
+  function captureQueuedDraft() {
+    return {
+      prompt: structuredClone(store.prompt),
+      ...resolvePromptInput(),
+    }
+  }
+
+  function stopQueuedEdit(restore?: boolean) {
+    const draft = queuedDraft()
+    setQueuedEditID(undefined)
+    setQueuedCursor(undefined)
+    setQueuedDraft(undefined)
+    if (!restore || !draft) return
+    setPrompt(draft.prompt)
+  }
+
+  function removeQueuedItem(id: string) {
+    const current = queuedEditID()
+    if (!current || current !== id) {
+      setQueuedPrompts((list) => list.filter((item) => item.id !== id))
+      toast.show({
+        variant: "info",
+        message: "Queued message removed",
+        duration: 1500,
+      })
+      return
+    }
+
+    const queue = queuedPromptsForSessionNewest()
+    const index = queuedCursor() ?? queue.findIndex((item) => item.id === id)
+    const next = removeQueued(queue, id, Math.max(index, 0))
+    setQueuedPrompts((list) => list.filter((item) => item.id !== id))
+    if (!next.item || next.cursor === undefined) {
+      stopQueuedEdit(true)
+      toast.show({
+        variant: "info",
+        message: "Queued message removed",
+        duration: 1500,
+      })
+      return
+    }
+
+    const draft = queuedDraft()
+    if (!draft) return
+    const merged = mergeQueuedPrompt(next.item, draft)
+    setQueuedCursor(next.cursor)
+    setQueuedEditID(next.item.id)
+    setPrompt({
+      input: merged.inputText,
+      parts: merged.parts,
+    })
+    toast.show({
+      variant: "info",
+      message: "Queued message removed",
+      duration: 1500,
+    })
+  }
+
   function showQueue() {
     const list = queuedPromptsForSession()
     if (list.length === 0) {
@@ -528,19 +619,30 @@ export function Prompt(props: PromptProps) {
     const paused = gate !== "open"
     const state = paused ? "paused" : "open"
     const note = gate === "wait_busy" || gate === "wait_idle" ? " (resumes after current manual turn)" : ""
-    const lines = list.map((item, index) => {
-      const model = `${item.model.providerID}/${item.model.modelID}`
-      const variant = item.variant ? ` · ${item.variant}` : ""
-      return `${index + 1}. ${queuedPreview(item.inputText)}\n   ${item.agent} · ${model}${variant}`
-    })
-
-    DialogAlert.show(
-      dialog,
-      "Queue",
-      [`Status: ${state}${note}`, `${list.length} end-loop message${list.length === 1 ? "" : "s"}`, "", ...lines].join(
-        "\n",
-      ),
-    )
+    dialog.replace(() => (
+      <DialogQueue
+        status={`(${state}${note})`}
+        items={queuedPromptsForSession}
+        current={queuedEditID}
+        onSelect={(id) => {
+          const queue = queuedPromptsForSessionNewest()
+          const index = queue.findIndex((item) => item.id === id)
+          if (index === -1) return
+          const target = queue[index]
+          if (!target) return
+          const draft = queuedDraft() ?? captureQueuedDraft()
+          if (!queuedDraft()) setQueuedDraft(draft)
+          const merged = mergeQueuedPrompt(target, draft)
+          setQueuedCursor(index)
+          setQueuedEditID(target.id)
+          setPrompt({
+            input: merged.inputText,
+            parts: merged.parts,
+          })
+        }}
+        onRemove={removeQueuedItem}
+      />
+    ))
   }
 
   createEffect(
@@ -583,8 +685,7 @@ export function Prompt(props: PromptProps) {
         category: "Prompt",
         hidden: true,
         onSelect: (dialog) => {
-          input.extmarks.clear()
-          input.clear()
+          clearPrompt()
           dialog.clear()
         },
       },
@@ -1054,14 +1155,18 @@ export function Prompt(props: PromptProps) {
     const target = list[next]
     if (!target) return
 
+    const payload = queuedDraft() ?? captureQueuedDraft()
+    if (!queuedDraft()) setQueuedDraft(payload)
+    const merged = mergeQueuedPrompt(target, payload)
+
     setQueuedCursor(next)
     setQueuedEditID(target.id)
-    input.setText(target.inputText)
+    input.setText(merged.inputText)
     setStore("prompt", {
-      input: target.inputText,
-      parts: target.parts,
+      input: merged.inputText,
+      parts: merged.parts,
     })
-    restoreExtmarksFromParts(target.parts)
+    restoreExtmarksFromParts(merged.parts)
     input.gotoBufferEnd()
   }
 
@@ -1121,8 +1226,7 @@ export function Prompt(props: PromptProps) {
     const current = queuedEditID()
     if (!current) return
     if (queuedPromptsForSession().some((item) => item.id === current)) return
-    setQueuedEditID(undefined)
-    setQueuedCursor(undefined)
+    stopQueuedEdit(true)
   })
 
   createEffect(() => {
@@ -1537,6 +1641,18 @@ export function Prompt(props: PromptProps) {
                   return
                 }
 
+                if (e.name === "backspace" && e.meta && editingQueuedPrompt()) {
+                  e.preventDefault()
+                  removeQueuedItem(editingQueuedPrompt()!.id)
+                  return
+                }
+
+                if (e.name === "escape" && editingQueuedPrompt()) {
+                  e.preventDefault()
+                  stopQueuedEdit(true)
+                  return
+                }
+
                 // Handle clipboard paste (Ctrl+V) - check for images first on Windows
                 // This is needed because Windows terminal doesn't properly send image data
                 // through bracketed paste, so we need to intercept the keypress and
@@ -1555,13 +1671,7 @@ export function Prompt(props: PromptProps) {
                   // If no image, let the default paste behavior continue
                 }
                 if (keybind.match("input_clear", e) && store.prompt.input !== "") {
-                  input.clear()
-                  input.extmarks.clear()
-                  setStore("prompt", {
-                    input: "",
-                    parts: [],
-                  })
-                  setStore("extmarkToPartIndex", new Map())
+                  clearPrompt()
                   return
                 }
                 if (keybind.match("app_exit", e)) {
