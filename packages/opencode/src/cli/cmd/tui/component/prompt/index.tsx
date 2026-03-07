@@ -561,6 +561,14 @@ export function Prompt(props: PromptProps) {
     return e.meta || e.alt
   }
 
+  function queuePrev(e: { name: string; meta?: boolean; alt?: boolean }) {
+    return (e.name === "up" && queueMod(e)) || (e.name === "p" && e.meta)
+  }
+
+  function queueNext(e: { name: string; meta?: boolean; alt?: boolean }) {
+    return (e.name === "down" && queueMod(e)) || (e.name === "n" && e.meta)
+  }
+
   function stopQueuedEdit(restore?: boolean) {
     const draft = queuedDraft()
     setQueuedEditID(undefined)
@@ -1633,13 +1641,13 @@ export function Prompt(props: PromptProps) {
                   return
                 }
 
-                if (e.name === "up" && queueMod(e)) {
+                if (queuePrev(e)) {
                   e.preventDefault()
                   editQueued(-1)
                   return
                 }
 
-                if (e.name === "down" && queueMod(e)) {
+                if (queueNext(e)) {
                   e.preventDefault()
                   editQueued(1)
                   return
