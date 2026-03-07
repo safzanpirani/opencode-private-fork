@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mergeQueuedPrompt, removeQueued } from "../../../src/cli/cmd/tui/component/prompt/queue"
+import { combineQueuedPrompts, mergeQueuedPrompt } from "../../../src/cli/cmd/tui/component/prompt/queue"
 
 describe("mergeQueuedPrompt", () => {
   test("appends existing draft below queued text with a blank line", () => {
@@ -112,30 +112,98 @@ describe("mergeQueuedPrompt", () => {
     expect(second.inputText).toBe("do something else\n\nand also do this")
   })
 
-  test("removeQueued keeps selection at the next available item", () => {
-    const result = removeQueued(
+  test("combineQueuedPrompts merges queued messages in send order and appends current draft last", () => {
+    const result = combineQueuedPrompts(
       [
-        { id: "c", value: "third" },
-        { id: "b", value: "second" },
-        { id: "a", value: "first" },
+        {
+          inputText: "first queued",
+          parts: [],
+        },
+        {
+          inputText: "second queued",
+          parts: [],
+        },
       ],
-      "b",
-      1,
+      {
+        inputText: "current draft",
+        nonTextParts: [],
+      },
     )
 
-    expect(result.list).toEqual([
-      { id: "c", value: "third" },
-      { id: "a", value: "first" },
-    ])
-    expect(result.cursor).toBe(1)
-    expect(result.item).toEqual({ id: "a", value: "first" })
+    expect(result.inputText).toBe("first queued\n\nsecond queued\n\ncurrent draft")
+    expect(result.parts).toEqual([])
   })
 
-  test("removeQueued clears selection when queue becomes empty", () => {
-    const result = removeQueued([{ id: "a", value: "first" }], "a", 0)
+  test("combineQueuedPrompts shifts later queued parts and current draft parts", () => {
+    const result = combineQueuedPrompts(
+      [
+        {
+          inputText: "first",
+          parts: [
+            {
+              type: "file",
+              mime: "text/plain",
+              filename: "first.txt",
+              url: "file:///first.txt",
+              source: {
+                type: "file",
+                path: "first.txt",
+                text: {
+                  start: 0,
+                  end: 7,
+                  value: "[First]",
+                },
+              },
+            },
+          ],
+        },
+        {
+          inputText: "second",
+          parts: [
+            {
+              type: "file",
+              mime: "text/plain",
+              filename: "second.txt",
+              url: "file:///second.txt",
+              source: {
+                type: "file",
+                path: "second.txt",
+                text: {
+                  start: 0,
+                  end: 8,
+                  value: "[Second]",
+                },
+              },
+            },
+          ],
+        },
+      ],
+      {
+        inputText: "draft",
+        nonTextParts: [
+          {
+            type: "file",
+            mime: "text/plain",
+            filename: "draft.txt",
+            url: "file:///draft.txt",
+            source: {
+              type: "file",
+              path: "draft.txt",
+              text: {
+                start: 0,
+                end: 7,
+                value: "[Draft]",
+              },
+            },
+          },
+        ],
+      },
+    )
 
-    expect(result.list).toEqual([])
-    expect(result.cursor).toBeUndefined()
-    expect(result.item).toBeUndefined()
+    expect(result.inputText).toBe("first\n\nsecond\n\ndraft")
+    expect(result.parts).toHaveLength(3)
+    expect(result.parts[0]).toMatchObject({ filename: "first.txt", source: { text: { start: 0, end: 7 } } })
+    expect(result.parts[1]).toMatchObject({ filename: "second.txt", source: { text: { start: 7, end: 15 } } })
+    expect(result.parts[2]).toMatchObject({ filename: "draft.txt", source: { text: { start: 15, end: 22 } } })
   })
 })

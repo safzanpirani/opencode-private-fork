@@ -1,5 +1,10 @@
 import type { PromptInfo } from "./history"
 
+type Prompt = {
+  inputText: string
+  parts: PromptInfo["parts"]
+}
+
 function appendInput(base: string, extra: string) {
   if (!base) return extra
   if (!extra) return base
@@ -25,29 +30,35 @@ function shiftParts(parts: PromptInfo["parts"], offset: number) {
   })
 }
 
-export function mergeQueuedPrompt(
-  target: { inputText: string; parts: PromptInfo["parts"] },
-  current: { inputText: string; nonTextParts: PromptInfo["parts"] },
-) {
-  const inputText = appendInput(target.inputText, current.inputText)
-  const offset = inputText.length - current.inputText.length
+function mergePrompt(base: Prompt, extra: Prompt) {
+  const inputText = appendInput(base.inputText, extra.inputText)
+  const offset = inputText.length - extra.inputText.length
   return {
     inputText,
-    parts: [...structuredClone(target.parts), ...shiftParts(current.nonTextParts, offset)],
+    parts: [...structuredClone(base.parts), ...shiftParts(extra.parts, offset)],
   }
 }
 
-export function removeQueued<T extends { id: string }>(list: T[], id: string, index: number) {
-  const next = list.filter((item) => item.id !== id)
-  if (next.length === 0) {
+export function mergeQueuedPrompt(target: Prompt, current: { inputText: string; nonTextParts: PromptInfo["parts"] }) {
+  return mergePrompt(target, {
+    inputText: current.inputText,
+    parts: current.nonTextParts,
+  })
+}
+
+export function combineQueuedPrompts(
+  list: Prompt[],
+  current?: { inputText: string; nonTextParts: PromptInfo["parts"] },
+) {
+  const first = list[0]
+  if (!first) {
     return {
-      list: next,
+      inputText: current?.inputText ?? "",
+      parts: structuredClone(current?.nonTextParts ?? []),
     }
   }
-  const cursor = Math.min(index, next.length - 1)
-  return {
-    list: next,
-    cursor,
-    item: next[cursor],
-  }
+
+  const combined = list.slice(1).reduce((acc, item) => mergePrompt(acc, item), structuredClone(first))
+  if (!current) return combined
+  return mergeQueuedPrompt(combined, current)
 }

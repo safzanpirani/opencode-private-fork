@@ -49,7 +49,7 @@ import { useKV } from "../../context/kv"
 import { useTextareaKeybindings } from "../textarea-keybindings"
 import { DialogSkill } from "../dialog-skill"
 import { DialogUsage, type UsageEntry } from "../dialog-usage"
-import { mergeQueuedPrompt } from "./queue"
+import { combineQueuedPrompts } from "./queue"
 
 export type PromptProps = {
   sessionID?: string
@@ -131,7 +131,6 @@ export function Prompt(props: PromptProps) {
   function clearPrompt() {
     input.extmarks.clear()
     input.clear()
-    setQueuedDraft(undefined)
     setStore("prompt", {
       input: "",
       parts: [],
@@ -515,16 +514,8 @@ export function Prompt(props: PromptProps) {
     variant?: string
   }
 
-  type QueuedDraft = {
-    inputText: string
-    nonTextParts: PromptInfo["parts"]
-  }
-
   const [queuedPrompts, setQueuedPrompts] = createSignal<QueuedPrompt[]>([])
   const [sendingQueuedPrompt, setSendingQueuedPrompt] = createSignal(false)
-  const [queuedEditID, setQueuedEditID] = createSignal<string>()
-  const [queuedCursor, setQueuedCursor] = createSignal<number>()
-  const [queuedDraft, setQueuedDraft] = createSignal<QueuedDraft>()
   const [queueGate, setQueueGate] = createSignal<"open" | "paused" | "wait_busy" | "wait_idle">("open")
 
   const queuedPromptsForSession = createMemo(() => {
@@ -532,13 +523,6 @@ export function Prompt(props: PromptProps) {
     if (!sessionID) return []
     return queuedPrompts().filter((item) => item.sessionID === sessionID)
   })
-  const queuedPromptsForSessionNewest = createMemo(() => queuedPromptsForSession().slice().reverse())
-  const editingQueuedPrompt = createMemo(() => {
-    const id = queuedEditID()
-    if (!id) return
-    return queuedPromptsForSession().find((item) => item.id === id)
-  })
-
   function showQueue() {
     const list = queuedPromptsForSession()
     if (list.length === 0) {
@@ -1056,32 +1040,16 @@ export function Prompt(props: PromptProps) {
     })
   }
 
-  function editQueued(direction: -1 | 1) {
+  function editQueued() {
     if (props.disabled) return
     if (!props.sessionID) return
     if (store.mode !== "normal") return
 
-    const list = queuedPromptsForSessionNewest()
+    const list = queuedPromptsForSession()
     if (list.length === 0) return
 
-    const current = queuedCursor()
-    const next = (() => {
-      if (current === undefined) return direction === -1 ? 0 : list.length - 1
-      const index = current + direction
-      if (index < 0) return list.length - 1
-      if (index >= list.length) return 0
-      return index
-    })()
-
-    const target = list[next]
-    if (!target) return
-
-    const payload = queuedDraft() ?? resolvePromptInput()
-    if (!queuedDraft()) setQueuedDraft(payload)
-    const merged = mergeQueuedPrompt(target, payload)
-
-    setQueuedCursor(next)
-    setQueuedEditID(target.id)
+    const merged = combineQueuedPrompts(list, resolvePromptInput())
+    setQueuedPrompts((items) => items.filter((item) => item.sessionID !== props.sessionID))
     input.setText(merged.inputText)
     setStore("prompt", {
       input: merged.inputText,
@@ -1089,6 +1057,11 @@ export function Prompt(props: PromptProps) {
     })
     restoreExtmarksFromParts(merged.parts)
     input.gotoBufferEnd()
+    toast.show({
+      variant: "info",
+      message: `Loaded ${list.length} queued message${list.length === 1 ? "" : "s"} into draft`,
+      duration: 1500,
+    })
   }
 
   function queueAtEndOfLoop() {
@@ -1129,9 +1102,6 @@ export function Prompt(props: PromptProps) {
       },
     ])
 
-    setQueuedCursor(undefined)
-    setQueuedEditID(undefined)
-    setQueuedDraft(undefined)
     history.append({
       ...store.prompt,
       mode: store.mode,
@@ -1143,15 +1113,6 @@ export function Prompt(props: PromptProps) {
       duration: 2000,
     })
   }
-
-  createEffect(() => {
-    const current = queuedEditID()
-    if (!current) return
-    if (queuedPromptsForSession().some((item) => item.id === current)) return
-    setQueuedEditID(undefined)
-    setQueuedCursor(undefined)
-    setQueuedDraft(undefined)
-  })
 
   createEffect(() => {
     const gate = queueGate()
@@ -1169,7 +1130,6 @@ export function Prompt(props: PromptProps) {
   createEffect(() => {
     if (queueGate() !== "open") return
     if (sendingQueuedPrompt()) return
-    if (queuedEditID()) return
     if (status().type !== "idle") return
     const next = queuedPromptsForSession()[0]
     if (!next) return
@@ -1246,34 +1206,6 @@ export function Prompt(props: PromptProps) {
     const payload = resolvePromptInput()
     const inputText = payload.inputText
     const nonTextParts = payload.nonTextParts
-
-    const queuedEditing = editingQueuedPrompt()
-    if (queuedEditing) {
-      setQueuedPrompts((list) =>
-        list.map((item) =>
-          item.id === queuedEditing.id
-            ? {
-                ...item,
-                inputText,
-                parts: nonTextParts,
-              }
-            : item,
-        ),
-      )
-      history.append({
-        ...store.prompt,
-        mode: store.mode,
-      })
-      setQueuedCursor(undefined)
-      setQueuedEditID(undefined)
-      clearPrompt()
-      toast.show({
-        variant: "success",
-        message: "Queued message updated",
-        duration: 1500,
-      })
-      return
-    }
 
     const selectedModel = local.model.current()
     if (!selectedModel) {
@@ -1555,13 +1487,13 @@ export function Prompt(props: PromptProps) {
 
                 if (e.name === "up" && e.meta) {
                   e.preventDefault()
-                  editQueued(-1)
+                  editQueued()
                   return
                 }
 
                 if (e.name === "down" && e.meta) {
                   e.preventDefault()
-                  editQueued(1)
+                  editQueued()
                   return
                 }
 
@@ -1775,17 +1707,12 @@ export function Prompt(props: PromptProps) {
         <Show when={queuedPromptsForSession().length > 0}>
           <box paddingLeft={1} paddingBottom={1} gap={0}>
             <For each={queuedPromptsForSession().slice(0, 2)}>
-              {(item, index) => {
-                const editing = createMemo(() => queuedEditID() === item.id)
-                return (
-                  <text fg={editing() ? theme.text : theme.textMuted}>
-                    <span style={{ fg: editing() ? theme.text : theme.textMuted }}>
-                      {editing() ? "● editing end-loop" : "○ queued end-loop"} {index() + 1}
-                    </span>
-                    <span style={{ fg: theme.textMuted }}> · {queuedPreview(item.inputText)}</span>
-                  </text>
-                )
-              }}
+              {(item, index) => (
+                <text fg={theme.textMuted}>
+                  <span style={{ fg: theme.textMuted }}>○ queued end-loop {index() + 1}</span>
+                  <span style={{ fg: theme.textMuted }}> · {queuedPreview(item.inputText)}</span>
+                </text>
+              )}
             </For>
             <Show when={queuedPromptsForSession().length > 2}>
               <text fg={theme.textMuted}>+{queuedPromptsForSession().length - 2} more queued</text>
