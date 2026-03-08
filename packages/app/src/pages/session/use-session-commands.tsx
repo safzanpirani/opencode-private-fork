@@ -20,6 +20,7 @@ import { findLast } from "@opencode-ai/util/array"
 import { extractPromptFromParts } from "@/utils/prompt"
 import { UserMessage } from "@opencode-ai/sdk/v2"
 import { canAddSelectionContext } from "@/pages/session/session-command-helpers"
+import { useCodexCommands } from "@/pages/session/use-codex-commands"
 
 export type SessionCommandContext = {
   navigateMessageByOffset: (offset: number) => void
@@ -58,6 +59,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const status = createMemo(() => sync.data.session_status[params.id ?? ""] ?? idle)
   const messages = createMemo(() => (params.id ? (sync.data.message[params.id] ?? []) : []))
   const userMessages = createMemo(() => messages().filter((m) => m.role === "user") as UserMessage[])
+  const codex = useCodexCommands()
   const visibleUserMessages = createMemo(() => {
     const revert = info()?.revert?.messageID
     if (!revert) return userMessages()
@@ -92,6 +94,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const fileCommand = withCategory(language.t("command.category.file"))
   const contextCommand = withCategory(language.t("command.category.context"))
   const viewCommand = withCategory(language.t("command.category.view"))
+  const providerCommand = withCategory(language.t("command.category.provider"))
   const terminalCommand = withCategory(language.t("command.category.terminal"))
   const modelCommand = withCategory(language.t("command.category.model"))
   const mcpCommand = withCategory(language.t("command.category.mcp"))
@@ -297,6 +300,52 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     }),
   ])
 
+  const codexCommands = createMemo(() => [
+    providerCommand({
+      id: "codex.usage",
+      title: "Show Codex usage",
+      description: "Show the current OpenAI account usage window",
+      slash: "usage",
+      onSelect: () => {
+        void codex.showUsage("/usage")
+      },
+    }),
+    providerCommand({
+      id: "codex.who",
+      title: "Show current Codex account",
+      description: "Show the active OpenAI account and saved profiles",
+      slash: "codexwho",
+      onSelect: () => {
+        void codex.showWho()
+      },
+    }),
+    providerCommand({
+      id: "codex.swap",
+      title: "Switch to the next Codex account",
+      description: "Rotate to the next saved OpenAI account",
+      slash: "codexswap",
+      onSelect: () => {
+        void codex.showSwap("/codexswap")
+      },
+    }),
+    providerCommand({
+      id: "codex.swap.status",
+      title: "Show Codex profiles",
+      description: "Open the Codex account status dialog",
+      onSelect: () => {
+        void codex.showSwap("/codexswap status")
+      },
+    }),
+    providerCommand({
+      id: "codex.swap.save",
+      title: "Save current Codex account",
+      description: "Save the currently active OpenAI account as a reusable profile",
+      onSelect: () => {
+        void codex.showSwap("/codexswap save")
+      },
+    }),
+  ])
+
   const sessionActionCommands = createMemo(() => [
     sessionCommand({
       id: "session.undo",
@@ -498,6 +547,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       messageCommands(),
       agentCommands(),
       permissionCommands(),
+      codexCommands(),
       sessionActionCommands(),
       shareCommands(),
     ].flatMap((x) => x),

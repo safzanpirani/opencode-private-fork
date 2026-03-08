@@ -17,6 +17,7 @@ import { Worktree as WorktreeState } from "@/utils/worktree"
 import { buildRequestParts } from "./build-request-parts"
 import { setCursorPosition } from "./editor-dom"
 import { formatServerError } from "@/utils/server-errors"
+import { useCodexCommands } from "@/pages/session/use-codex-commands"
 
 type PendingPrompt = {
   abort: AbortController
@@ -64,6 +65,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const layout = useLayout()
   const language = useLanguage()
   const params = useParams()
+  const codex = useCodexCommands()
 
   const errorMessage = (err: unknown) => {
     if (err && typeof err === "object" && "data" in err) {
@@ -126,6 +128,13 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     if (text.trim().length === 0 && images.length === 0 && input.commentCount() === 0) {
       if (input.working()) abort()
+      return
+    }
+
+    if (mode === "normal" && (await codex.run(text.trim()))) {
+      prompt.reset()
+      input.setMode("normal")
+      input.setPopover(null)
       return
     }
 

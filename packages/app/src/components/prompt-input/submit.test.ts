@@ -19,6 +19,7 @@ const syncedDirectories: string[] = []
 let params: { id?: string } = {}
 let selected = "/repo/worktree-a"
 let variant: string | undefined
+let codexHandled = false
 
 const promptValue: Prompt = [{ type: "text", content: "ls", start: 0, end: 2 }]
 
@@ -161,6 +162,12 @@ beforeAll(async () => {
     }),
   }))
 
+  mock.module("@/pages/session/use-codex-commands", () => ({
+    useCodexCommands: () => ({
+      run: async () => codexHandled,
+    }),
+  }))
+
   const mod = await import("./submit")
   createPromptSubmit = mod.createPromptSubmit
 })
@@ -175,6 +182,7 @@ beforeEach(() => {
   syncedDirectories.length = 0
   selected = "/repo/worktree-a"
   variant = undefined
+  codexHandled = false
 })
 
 describe("prompt submit worktree selection", () => {
@@ -270,5 +278,33 @@ describe("prompt submit worktree selection", () => {
         variant: "high",
       },
     })
+  })
+
+  test("does not send a prompt when a codex slash command is handled", async () => {
+    params = { id: "session-1" }
+    codexHandled = true
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+
+    expect(optimistic).toEqual([])
+    expect(createdSessions).toEqual([])
+    expect(sentShell).toEqual([])
   })
 })
