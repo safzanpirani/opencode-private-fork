@@ -28,7 +28,7 @@ const log = Log.create({ service: "db" })
 
 export namespace Database {
   export function file(channel: string) {
-    if (channel === "latest" || Flag.OPENCODE_DISABLE_CHANNEL_DB) return "opencode.db"
+    if (channel === "latest" || channel === "local" || Flag.OPENCODE_DISABLE_CHANNEL_DB) return "opencode.db"
     const safe = channel.replace(/[^a-zA-Z0-9._-]/g, "-")
     return `opencode-${safe}.db`
   }
