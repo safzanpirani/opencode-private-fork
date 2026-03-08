@@ -19,7 +19,11 @@ import { usePlatform } from "@/context/platform"
 import { DialogSelectModel } from "./dialog-select-model"
 import { DialogSelectProvider } from "./dialog-select-provider"
 
-export function DialogConnectProvider(props: { provider: string }) {
+export function DialogConnectProvider(props: {
+  provider: string
+  methodType?: "api" | "oauth"
+  onComplete?: () => void | Promise<void>
+}) {
   const dialog = useDialog()
   const globalSync = useGlobalSync()
   const globalSDK = useGlobalSDK()
@@ -37,15 +41,16 @@ export function DialogConnectProvider(props: { provider: string }) {
   })
 
   const provider = createMemo(() => globalSync.data.provider.all.find((x) => x.id === props.provider)!)
-  const methods = createMemo(
-    () =>
-      globalSync.data.provider_auth[props.provider] ?? [
-        {
-          type: "api",
-          label: language.t("provider.connect.method.apiKey"),
-        },
-      ],
-  )
+  const methods = createMemo(() => {
+    const list = globalSync.data.provider_auth[props.provider] ?? [
+      {
+        type: "api",
+        label: language.t("provider.connect.method.apiKey"),
+      },
+    ]
+    if (!props.methodType) return list
+    return list.filter((item) => item.type === props.methodType)
+  })
   const [store, setStore] = createStore({
     methodIndex: undefined as undefined | number,
     authorization: undefined as undefined | ProviderAuthAuthorization,
@@ -181,6 +186,7 @@ export function DialogConnectProvider(props: { provider: string }) {
   async function complete() {
     await globalSDK.client.global.dispose()
     dialog.close()
+    await props.onComplete?.()
     showToast({
       variant: "success",
       icon: "circle-check",
